@@ -1,0 +1,59 @@
+name: Production Incident
+description: Acil canlı sistem sorunu
+title: "[INCIDENT] "
+labels: ["type:incident", "priority:P0", "needs-human"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ⚠️ **Bu template canlı sistem sorunları içindir. Sıradan bug için "Bug Report" kullan.**
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: Incident Summary
+      description: Ne oluyor? Etki nedir?
+    validations:
+      required: true
+
+  - type: input
+    id: detected_at
+    attributes:
+      label: Detected At (UTC)
+      placeholder: "2026-06-09 14:30 UTC"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: severity
+    attributes:
+      label: Severity
+      options:
+        - SEV-1 — Total outage
+        - SEV-2 — Major degradation
+        - SEV-3 — Partial impact
+        - SEV-4 — Minor issue
+    validations:
+      required: true
+
+  - type: textarea
+    id: affected
+    attributes:
+      label: Affected Systems / Users
+      placeholder: "API endpoints: /api/v1/*, ~500 active users"
+    validations:
+      required: true
+
+  - type: textarea
+    id: mitigation
+    attributes:
+      label: Mitigation Steps Taken
+      placeholder: |
+        - [x] Rolled back deployment
+        - [ ] Investigating root cause
+
+  - type: textarea
+    id: postmortem
+    attributes:
+      label: Postmortem Link (after resolution)
+      placeholder: "docs/postmortems/2026-06-09-api-outage.md"

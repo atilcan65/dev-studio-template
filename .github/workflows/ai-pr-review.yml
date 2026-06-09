@@ -1,0 +1,32 @@
+name: AI PR Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  ai-review:
+    name: AI Code Review
+    runs-on: ubuntu-latest
+    if: github.event.pull_request.draft == false
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get PR diff
+        id: diff
+        run: |
+          git diff origin/${{ github.base_ref }}..HEAD --stat
+          echo "---"
+          DIFF_LINES=$(git diff origin/${{ github.base_ref }}..HEAD --shortstat)
+          echo "Stats: $DIFF_LINES"
+
+      - name: Placeholder for AI review
+        run: |
+          echo "🤖 AI PR review will be triggered here in Step 10/12"
+          echo "Future: Claude Code subagent reviews diff and posts comment"
+          echo "PR: #${{ github.event.pull_request.number }}"
+          echo "Author: ${{ github.event.pull_request.user.login }}"

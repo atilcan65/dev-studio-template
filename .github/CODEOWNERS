@@ -1,0 +1,7 @@
+# Default owner for everything
+* @atilcan65
+
+# Architecture-critical paths
+.github/             @atilcan65
+.claude/             @atilcan65
+docs/ARCHITECTURE-*  @atilcan65

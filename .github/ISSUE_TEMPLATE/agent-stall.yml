@@ -1,0 +1,52 @@
+name: Agent Stall
+description: Agent takıldı, ilerleyemiyor
+title: "[Stall] "
+labels: ["agent-stall", "needs-human", "status:blocked"]
+body:
+  - type: dropdown
+    id: agent
+    attributes:
+      label: Stuck Agent
+      options:
+        - orchestrator
+        - pm
+        - architect
+        - developer
+        - tester
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Current Task Context
+      description: Hangi issue/PR/task üzerinde çalışıyordu?
+      placeholder: "Issue #42 — implement OAuth flow"
+    validations:
+      required: true
+
+  - type: textarea
+    id: stall_reason
+    attributes:
+      label: Why Stuck?
+      placeholder: |
+        - Belirsiz requirement
+        - Eksik API/dependency
+        - Çelişkili kararlar
+        - Tool/permission hatası
+    validations:
+      required: true
+
+  - type: textarea
+    id: last_output
+    attributes:
+      label: Last Agent Output
+      placeholder: Agent'ın son mesajı veya error log...
+
+  - type: textarea
+    id: needed
+    attributes:
+      label: What's Needed from Human
+      placeholder: "Hangi karar/bilgi/erişim agent'ı unstuck eder?"
+    validations:
+      required: true

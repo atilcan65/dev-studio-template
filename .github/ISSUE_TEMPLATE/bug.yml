@@ -1,0 +1,62 @@
+name: Bug Report
+description: Hata veya beklenmedik davranış
+title: "[Bug] "
+labels: ["type:bug", "status:backlog"]
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: Bug Description
+      description: Ne oldu? Ne bekliyordun?
+      placeholder: "Login butonuna tıklayınca 500 hatası alıyorum"
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to Reproduce
+      placeholder: |
+        1. /login sayfasına git
+        2. Email + şifre gir
+        3. Submit'e bas
+        4. 500 hatası görülür
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Behavior
+      placeholder: "Başarılı login + dashboard'a yönlendirme"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Priority
+      options:
+        - P0 — Critical (prod down)
+        - P1 — High (major impact)
+        - P2 — Medium (workaround exists)
+        - P3 — Low (cosmetic)
+      default: 2
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      placeholder: |
+        - OS:
+        - Browser:
+        - Version:
+        - User role:
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / Screenshots
+      placeholder: Hata mesajı, stack trace, ekran görüntüsü...

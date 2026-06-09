@@ -1,0 +1,85 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  lint-and-test:
+    name: Lint & Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check for package.json
+        id: check-pkg
+        run: |
+          if [ -f package.json ]; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Setup Node.js
+        if: steps.check-pkg.outputs.exists == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        if: steps.check-pkg.outputs.exists == 'true'
+        run: npm ci
+
+      - name: Lint
+        if: steps.check-pkg.outputs.exists == 'true'
+        run: |
+          if npm run --silent 2>&1 | grep -q "lint"; then
+            npm run lint
+          else
+            echo "No lint script found — skipping"
+          fi
+
+      - name: Test
+        if: steps.check-pkg.outputs.exists == 'true'
+        run: |
+          if npm run --silent 2>&1 | grep -q "test"; then
+            npm test
+          else
+            echo "No test script found — skipping"
+          fi
+
+      - name: No source yet
+        if: steps.check-pkg.outputs.exists == 'false'
+        run: echo "📦 No package.json yet — repo scaffold only. CI will run actual checks once code is added."
+
+  conventional-commits:
+    name: Conventional Commits
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+
+    steps:
+      - name: Check PR title
+        uses: amannn/action-semantic-pull-request@v5
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          types: |
+            feat
+            fix
+            chore
+            docs
+            refactor
+            test
+            ci
+            perf
+            build
+            revert
