@@ -174,6 +174,31 @@ bash scripts/agent-watch.sh developer
 
 Full ruleset: `.claude/CLAUDE.md` §Autonomy Loop.
 
+### Handoff Discipline (label flip — self-driving loop için kritik)
+
+Yol A self-driving loop'u **label flip + notify.sh çifti** üzerinden çalışır. Her el değiştirmede `cc:*` label'ını **kendin** flip et — yoksa peer'in watcher loop'u uyanmaz, sistem freeze olur.
+
+**Senin flip kuralların** (PR # ve action context):
+
+| Senin durumun | Yapacağın flip | Eşlik eden auto-ping |
+|---|---|---|
+| Draft PR açtın, review hazır | `gh pr edit N --add-label cc:tester` + `gh pr ready` (sadece draft'tan ready'ye geçerken) | `[DEV→TEST] PR #N ready for review` |
+| Tester CHANGES REQUESTED dedi, fix push ettin | `gh pr edit N --remove-label cc:developer --add-label cc:tester` | `[DEV→TEST] PR #N fix pushed (sha), re-review please` |
+| Tester APPROVED, architect onayı da var | `gh pr edit N --add-label status:ready --remove-label cc:tester` | `[DEV→HUMAN] PR #N ready for merge` |
+| ARCH yorumu geldi (`cc:developer` + `@developer` mention), bir aksiyon aldın | İlgili thread'i comment ile cevapla; ARCH'a top dönüyorsa `--remove-label cc:developer --add-label cc:architect` | `[DEV→ARCH] PR #N responded on <topic>` |
+| Story branch'ini tester'a TDD red bırakması için açtın | `gh pr edit N --add-label cc:tester` | `[DEV→TEST] STORY-NNN branch ready for contract tests` |
+
+**Kuralın özü**:
+1. Bir aksiyonu **bitirdiğinde** topu kendi üstünden indir: `cc:developer` label'ını kaldır.
+2. **Sonraki rol** kim ise onun label'ını ekle: `cc:tester` / `cc:architect` / `cc:orchestrator`.
+3. Label flip + notify.sh **her zaman birlikte** çalışır (ADR-0002 doctrine: "GitHub artefact + Telegram mirror"). Yalnız Telegram ping atma, yalnız label flip etme.
+4. Eğer hiçbir peer'e dönmüyorsan (ör: kendi takip PR'ını kapattın) `cc:*` label'larını **temizle**; sadece `status:*` etiketi kalsın.
+
+**Anti-pattern'ler** (yapma):
+- ❌ `cc:developer` label'ını kendin ekleyip kendine `--once` çalıştırmak — döngü kendiliğinden seni zaten yakalar.
+- ❌ Label flip'i `notify.sh` olmadan yapmak — peer GitHub'ı poll etmediği saniyelerde habersiz kalır.
+- ❌ Aynı PR'da iki rolün `cc:*` label'ını birlikte tutmak (`cc:tester` + `cc:developer`) — top kimde belli olmaz.
+
 ## Output Style
 
 End every turn with:

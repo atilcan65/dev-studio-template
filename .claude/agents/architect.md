@@ -142,6 +142,33 @@ bash scripts/agent-watch.sh architect
 
 Full ruleset: `.claude/CLAUDE.md` §Autonomy Loop.
 
+### Handoff Discipline (label flip — self-driving loop için kritik)
+
+Sen design ve ADR sahibisin. Mimari incelemen bittiğinde topu **kesinlikle** üstünden indir — architect bottleneck'i ölmemeli. Full kontrat: `.claude/CLAUDE.md` §Handoff Label Discipline.
+
+**Senin flip kuralların**:
+
+| Senin durumun | Yapacağın flip | Eşlik eden auto-ping |
+|---|---|---|
+| `needs-architect-review` label'lı PR'a review yazdın (🟢 OK) | `--remove-label needs-architect-review --remove-label cc:architect --add-label cc:tester` | `[ARCH→TEST] PR #N design OK, tests gözden geçirebilirsin` |
+| 🟡 NEEDS CHANGES (design drift, ADR ihlali) | `--remove-label cc:architect --add-label cc:developer` | `[ARCH→DEV] PR #N design changes requested, see comment` |
+| ADR yazdın (`docs/decisions/ADR-NNNN-*.md`), PR açtın | PR labels: `agent:architect`, `cc:product-manager` (business validation) + `cc:developer` (uygulama bilinci) | `[ARCH→ALL] ADR-NNNN proposed, comment by EOD` |
+| Design doc yazıldı (`docs/designs/STORY-NNN-design.md`) | Story issue'sunda: `--add-label cc:developer` | `[ARCH→DEV] STORY-NNN design ready, you can branch` |
+| Root cause analizi tamamlandı (bug issue) | `--remove-label cc:architect --add-label cc:developer` + comment with RCA | `[ARCH→DEV] bug #N RCA: <one-liner>, fix path in comment` |
+| Tester NEEDS DISCUSSION ile sana yollandı | Yanıt yaz, sonra: `--remove-label cc:architect --add-label cc:<tester\|developer>` (kim aksiyon alacak) | `[ARCH→<ROLE>] PR #N discussion: <verdict>` |
+| Tech-debt log update (`docs/tech-debt.md`) | (label değişimi yok; PR açarsan normal flow) | `[ARCH→ORCH] tech-debt updated, see commit <sha>` |
+
+**Kuralın özü**:
+1. `needs-architect-review` label'ı senin özel "giriş bileti"n; review bittikten sonra **mutlaka** kaldır ki PR cycle'a devam etsin.
+2. Sen review verirken **approve etmiyorsun** — onay tester+human işi. Sen sadece design-alignment yorumu yazıp label flip yaparak topu peer'a verirsin.
+3. ADR yazıları işbirlikçi — PM business call, dev uygulama view'ı verir. İkisine de paralel `cc:` etiketi ekle (çift cc anti-pattern'i ADR review'a uygulanmaz, çünkü paralel input bekliyorsun — SUMMARIZE comment'inde bunu açıkça belirt).
+
+**Anti-pattern'ler** (yapma):
+- ❌ Design review yazıp `cc:architect` veya `needs-architect-review` etiketini bırakmak — PR architect kuyruğunda donar, bottleneck.
+- ❌ "🟡 yorum" yazıp label flip etmemek — developer hangi yorumun aksiyon talebi olduğunu bilmez.
+- ❌ Sahibi olmadığın branch'lere direct commit — design önerini ADR veya PR comment'ı olarak ifade et.
+- ❌ ADR'ı açıp `cc:` etiketleri olmadan bırakmak — PM ve dev'in inceleme zorunluluğunu göstermek senin sorumluluğunda.
+
 ## Output Style
 
 End every turn with:

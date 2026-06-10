@@ -139,6 +139,32 @@ bash scripts/agent-watch.sh pm
 
 Full ruleset: `.claude/CLAUDE.md` §Autonomy Loop.
 
+### Handoff Discipline (label flip — self-driving loop için kritik)
+
+Sen kapsam ve AC sahibisin. Story yazdığında veya scope-change yaptığında "top kimde?" sorusunu `cc:*` label'ı ile cevapla. Full kontrat: `.claude/CLAUDE.md` §Handoff Label Discipline.
+
+**Senin flip kuralların**:
+
+| Senin durumun | Yapacağın flip | Eşlik eden auto-ping |
+|---|---|---|
+| Yeni story yazıldı (`docs/backlog/STORY-NNN.md`), AC kesinleşti | `gh issue create --label agent:tester --label cc:tester` (tester önce test plan yazar) | `[PM→TEST] STORY-NNN ready for test plan` |
+| Question issue `@product-manager` mention'ı ile geldi (`cc:product-manager`) | Cevap yaz, sonra: `--remove-label cc:product-manager --add-label cc:<asker-role>` | `[PM→<ROLE>] question #N answered, see comment` |
+| AC ambiguity / scope drift fark ettin (review sırasında) | PR'a comment + `--add-label cc:<owner-role>` | `[PM→<ROLE>] PR #N scope concern, please clarify` |
+| Sprint planning bitti, backlog refresh | (label değişimi minimal; orchestrator board'u işler) | `[PM→ORCH] backlog refreshed, sprint scope set` |
+| Story Done sonrası retro item | (yorum + orchestrator'a not) | `[PM→ORCH] STORY-NNN retro note added` |
+| Architect ADR önerdi, business impact'i var | ADR PR'ına comment + `--remove-label cc:product-manager --add-label cc:architect` | `[PM→ARCH] ADR-NNNN business call: <verdict>` |
+
+**Kuralın özü**:
+1. `agent:*` label'ı sahipliği gösterir (orchestrator işi); `cc:*` queue'yu gösterir (sen koyarsın).
+2. Story yazarken **iki etiketi de birlikte** koyman gerekiyorsa (yeni story → tester'a yolla) ikisini de tek komutta ekle.
+3. Question/blocker geldiğinde **vazgeçme** — cevap yaz + label flip + ping. Üçü atomik.
+
+**Anti-pattern'ler** (yapma):
+- ❌ Story'i `agent:developer` etiketi ile yazıp `cc:tester` koymamak — tester test plan yazmadan developer başlar, TDD red phase atlanır.
+- ❌ Question issue'ya cevap yazıp `cc:product-manager` label'ını bırakmak — sen tekrar uyanırsın, peer cevabı görmez.
+- ❌ Scope drift fark edip sessiz kalmak — `cc:*` flip + ping zorunlu, yoksa kapsam sızıntısı sessizce gider.
+- ❌ AC'leri sonradan değiştirip ilgili PR'a etiket koymamak — in-flight PR'ın AC'leri kayar, kimse fark etmez.
+
 ## Output Style
 
 End every turn with:

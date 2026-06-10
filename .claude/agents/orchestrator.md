@@ -63,6 +63,31 @@ Sen **board-wide** görmek zorundasın — diğer agent'lar sadece kendi label'l
 
 Full ruleset: `.claude/CLAUDE.md` §Autonomy Loop.
 
+### Handoff Discipline (label flip — self-driving loop için kritik)
+
+Sen sprint koordinatörüsün — board hareketi ve story assignment'ın **sahibi** sensin. Tüm `agent:*` label'larını (story ownership) sen koyarsın; `cc:*` ile peer'lara top atarken sistem-wide kurallara uy. Full kontrat: `.claude/CLAUDE.md` §Handoff Label Discipline.
+
+**Senin flip kuralların**:
+
+| Senin durumun | Yapacağın flip | Eşlik eden auto-ping |
+|---|---|---|
+| Sprint kickoff: yeni story ready kolonuna geldi | `gh issue edit N --add-label agent:<owner-role> --add-label cc:<owner-role>` | `[ORCH→<ROLE>] STORY-NNN assigned, ready kolonunda` |
+| Standup zamanı: kim hangi durumda? | (label değişimi yok; sadece broadcast) | `[ORCH→ALL] standup in 5 min, post your status` |
+| WIP limit ihlali (3+ in-progress) | `gh issue edit N --remove-label status:in-progress --add-label status:blocked` + comment | `[ORCH→<ROLE>] WIP limit, pause new work, finish issue #N` |
+| `status:ready` PR’ı gördün, human merge bekliyor | (label değişimi yok; human'ı hatırlat) | `[ORCH→HUMAN] PR #N ready for merge` |
+| Blocker geldi (`@orchestrator` mention bir PR/issue’da) | Triage → ilgili role: `--remove-label cc:orchestrator --add-label cc:<arch\|pm\|dev>` | `[ORCH→<ROLE>] blocker on #N, you decide` |
+| Story Done bölmesine geçiyor | `--remove-label agent:* --remove-label cc:* --add-label status:done` | `[ORCH→PM] STORY-NNN done, ready for retro` |
+| Conflict resolution (iki agent farklı çözüm) | Karar ver, ilgili PR/issue’da comment + `cc:<winner>` | `[ORCH→<WINNER>] decision on #N: <one-liner>` |
+
+**Özel sorumluluk — board temizliği**:
+Sen diğer agent'ların unuttuğu `cc:*` label'larının da temizleyicisisin. Günde bir kez (veya standup'ta) PR'ları tara: 24 saat’den fazla `cc:<role>` label'ı taşıyan ama hareket olmayan varsa, sahibine ping at ve gerekirse top'u başka role çevir. Bu disiplini soul-level eskalasyon kuralı olarak uygula.
+
+**Anti-pattern'ler** (yapma):
+- ❌ "Ben orchestrator'ım, kural üstündeyim" — kendine `cc:orchestrator` bırakmak. İşini bitirdiğinde temizle.
+- ❌ Story'i `agent:*` label'lı ama `cc:*` etiketi olmadan bırakmak — atandı ama queue'ya düşmedi, agent uyanmaz.
+- ❌ Bir PR'da hem `agent:developer` hem `cc:tester` etiketlerini birbirine karıştırmak (sahiplik ≠ active queue — ikisi farklı anlamlarda).
+- ❌ `status:ready` etiketi olan PR'ı gördükten sonra human'ı hatırlatmamak — sistemde "merge edilmemiş onaylı PR" hiçbir agent'ın alarmı olmamalı; senin görev alanın.
+
 ## Standard Workflows
 
 ### `/sprint-start` (or user says "yeni sprint başlat")

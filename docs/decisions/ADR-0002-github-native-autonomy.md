@@ -114,6 +114,7 @@ The trade-off: `gh issue list --assignee @me` doesn't disambiguate roles. We use
 6. **Standard label set**: must include `agent:<role>` (5 labels), `status:ready|in-progress|in-review|blocked|done`, `cc:<role>` (5 labels) for review fanout.
 7. **`scripts/notify.sh`**: unchanged in code; doctrine updated — every call must be paired with a GitHub artefact that the peer can detect.
 8. **Self-driving loop (PR-B)**: `scripts/agent-watch.sh --loop` runs as a background daemon per pane (spawned by `dev-studio-start.sh`). When the loop detects `new_events > 0` it injects a wake-up prompt directly into the role's tmux pane via `tmux send-keys`, so the Claude session in that pane picks up the work without human relay. See §Self-Driving Loop below.
+9. **Handoff label discipline (PR-B)**: `CLAUDE.md` §Handoff Label Discipline section is added as the universal contract; each `.claude/agents/<role>.md` adds a role-specific §Handoff Discipline section with a flip-rule table, four prose principles, and three–four anti-patterns. See §Handoff Label Discipline below.
 
 ### Self-Driving Loop (the missing link between polling and action)
 **Problem this fixes.** With `--once` alone, polling only happens when something (a human, a `tmux send-keys`, or a tool call) triggers Claude to call the watcher. Background `--loop` without a wake mechanism is also insufficient: the script writes JSON to a log file but the Claude process in the pane has no way to notice it. Result: the system observes events but does not act on them.
@@ -149,6 +150,45 @@ The agent picks up the event, performs its role-specific action (review, comment
 - Title-based pane lookup means a recovered/restarted pane is found correctly even after layout changes.
 - `processed_event_ids` dedupe prevents the same event from waking the agent twice across loop iterations.
 - The launcher's cleanup hook kills the watch loop on `claude` exit so dead panes do not poll forever.
+
+### Handoff Label Discipline (the contract that keeps the loop alive)
+**Problem this fixes.** Polling + wake-up only solves "how does an agent learn about new work?" — it does not solve "who owns the next move?". Without a discipline, two failure modes appear:
+
+1. **Ball-stuck**: an agent finishes its work but leaves `cc:<self>` in place; the watcher loop keeps waking it on the same PR (processed-id deduplication prevents re-processing, but the label still signals dirty state to humans and to the orchestrator's wider lens).
+2. **Silent stall**: an agent finishes its work and pings via `notify.sh` but forgets to flip the label; the peer's `agent-watch.sh` poll never picks up the GitHub artefact, so the peer's pane never wakes via the self-driving loop.
+
+**The contract (binding for every role).**
+Every agent, when finishing an action on a PR or issue, executes three steps as a single atomic move:
+1. **Remove** their own `cc:<self>` label — take their own ball off the field.
+2. **Add** the next role's `cc:<next>` label (or `status:ready` when the next actor is the human owner).
+3. **Send** `scripts/notify.sh -l <next> "[<self>→<next>] <ref> <reason>"` — the Telegram mirror.
+
+Skipping any of the three breaks the loop:
+- Skip (1) → ball stuck on self, dirty board state.
+- Skip (2) → peer's watcher does not detect a new event.
+- Skip (3) → human loses real-time visibility; the doctrine in §Auto-Ping is violated.
+
+**Label semantics (template-level invariant).**
+| Label family | Meaning | Owner of placement | Owner of removal |
+|---|---|---|---|
+| `agent:<role>` | Ownership — who is accountable for the story | orchestrator | orchestrator (on Done) |
+| `cc:<role>` | Active queue — who must move next | the role that just finished | the role being cc'd (when they finish) |
+| `status:in-review` | PR open for review | developer (on PR ready) | orchestrator / human (on merge) |
+| `status:ready` | Tester + arch approved, human merge gate | tester (on APPROVED) | human (on merge) |
+| `needs-architect-review` | Mimari etki var, ARCH input gerekli | developer or tester | architect (when review posted) |
+
+**Anti-patterns (template-wide forbidden).**
+- Dual `cc:*` labels (e.g. `cc:tester` + `cc:developer` together) — ownership ambiguity. *Exception*: architect's ADR proposal may carry `cc:product-manager + cc:developer` because parallel input is intended; the ADR comment must make this explicit.
+- Leaving `cc:<self>` after finishing — dirty state; orchestrator stale-check will eventually escalate.
+- Self-`cc:` — a role tagging itself is a no-op (watcher already picks up `agent:<role>` queue) and creates confusion.
+- Label flip without `notify.sh` (or vice versa) — the two-channel doctrine is fundamental, not optional.
+
+**Implementation surface.**
+- The canonical contract lives in `CLAUDE.md` §Handoff Label Discipline (single source of truth).
+- Each `.claude/agents/<role>.md` adds a §Handoff Discipline section with a role-specific flip-rule table, four prose principles, and three–four anti-patterns. Role tables enumerate concrete situations (verdict → flip → ping triple).
+- The orchestrator has a special role: it is the **sweeper** — it scans for PRs with `cc:*` older than 24h and pings the holder; if the holder is silent, it can re-route the ball.
+
+**Why this lives in an ADR.** The label-flip contract is the contract that makes the polling loop self-correcting. Without it, polling produces events but actions do not chain. Encoding the discipline at the architecture layer means future projects copying this template inherit the *behavior*, not just the scripts.
 
 ### Migration
 - Sprint 1 is mid-flight. We land this in a single PR (`chore/github-native-autonomy`) without touching in-flight stories.

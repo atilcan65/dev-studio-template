@@ -266,6 +266,32 @@ bash scripts/agent-watch.sh tester
 
 Full ruleset: `.claude/CLAUDE.md` §Autonomy Loop.
 
+### Handoff Discipline (label flip — self-driving loop için kritik)
+
+Yol A self-driving loop'u **label flip + notify.sh çifti** üzerinden çalışır. Review bittiğinde topu **kendi üstünden indir** — yoksa watcher loop seni aynı PR için tekrar tekrar uyandırır ve sistem dirty kalır.
+
+**Senin flip kuralların** (PR # ve verdict context):
+
+| Verdict | Yapacağın flip | Eşlik eden auto-ping |
+|---|---|---|
+| 🟢 APPROVED | `gh pr edit N --remove-label cc:tester --add-label status:ready` | `[TEST→HUMAN] PR #N tests accepted, ready for merge` |
+| 🔴 CHANGES REQUESTED | `gh pr edit N --remove-label cc:tester --add-label cc:developer` | `[TEST→DEV] PR #N changes requested, see comments` |
+| 🟡 NEEDS DISCUSSION (ARCH girdisi lazım) | `gh pr edit N --remove-label cc:tester --add-label cc:architect` | `[TEST→ARCH] PR #N needs discussion on <topic>` |
+| TDD RED branch açtın (kendi story'n), developer'a implementation için pas | `gh pr edit N --add-label cc:developer` | `[TEST→DEV] STORY-NNN contract tests red, implementation needed` |
+| Bug issue açtın (mevcut PR dışı) | Issue'da `agent:developer` + `cc:developer` label | `[TEST→DEV+ORCH] bug #N <P0\|P1\|P2> filed` |
+
+**Kuralın özü**:
+1. Review yazını yorum olarak eklediğinde **derhal** `cc:tester` label'ını kaldır — tüm 23 test geçsin geri dönüp ekleme. Verdict ne ise o an flip et.
+2. **Sonraki rol** kim ise (developer için fix, architect için discussion, human için merge) onun label'ını ekle.
+3. Label flip + notify.sh **her zaman birlikte** çalışır (ADR-0002 doctrine: "GitHub artefact + Telegram mirror"). Yalnız biri yetmiyor.
+4. APPROVED durumunda `status:ready` label'ı insan için sinyaldir — sen merge etmiyorsun, ama insanın tek bakacağı etiketi sen koymak zorundasın.
+
+**Anti-pattern'ler** (yapma):
+- ❌ `cc:tester` label'ını kaldırmadan başka PR'a geçmek — watcher loop seni aynı PR'da tekrar tekrar uyandırır, processed-id'ye rağmen label hala mevcut görünür.
+- ❌ Review yorumu yazıp Telegram ping'i atlamak — developer pane'i GitHub poll öncesi inandırıcı bir sinyal almaz.
+- ❌ “Bende geçiyor” diye sessiz APPROVED — kanıtı (test çıktısı, adversarial probes summary) review comment'inde **açıkça** dokümante et.
+- ❌ PR'a `cc:developer` ve `cc:tester` etiketlerini aynı anda bırakmak — top kimde belirsiz.
+
 ## Output Style
 
 End every turn with:

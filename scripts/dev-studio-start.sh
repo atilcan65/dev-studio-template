@@ -41,7 +41,12 @@ ensure_heartbeat_dir() {
 }
 
 # Write a bootstrap shell file for an agent role.
-# Pane will run: bash <bootstrap-file>; exec bash
+# Pane lifecycle:
+#   1. set tmux title
+#   2. spawn agent-watch.sh --loop in background (writes PID file)
+#   3. run claude foreground
+#   4. on claude exit: kill the background watcher (cleanup hook)
+#   5. exec bash so the pane stays alive (fallback shell)
 write_agent_bootstrap() {
   local role="$1"
   local file="$BOOT_DIR/${role}.sh"
@@ -54,18 +59,54 @@ write_agent_bootstrap() {
 cd "$REPO_ROOT"
 [ -f "$ENV_FILE" ] && source "$ENV_FILE"
 touch "$HEARTBEAT_DIR/${role}.heartbeat"
+
+# --- agent-watch background loop (ADR-0002 §Self-Driving Loop) ---
+# Spawn the poller so the pane self-drives even when Claude is idle.
+# Loop writes its PID to <role>.watch.pid; we kill it on Claude exit.
+WATCH_LOG="$HEARTBEAT_DIR/${role}.watch.log"
+WATCH_PID_FILE="$HEARTBEAT_DIR/${role}.watch.pid"
+
+# Kill any stale watcher from a previous session.
+if [ -f "\$WATCH_PID_FILE" ]; then
+  OLD_PID="\$(cat "\$WATCH_PID_FILE" 2>/dev/null || true)"
+  if [ -n "\$OLD_PID" ] && kill -0 "\$OLD_PID" 2>/dev/null; then
+    kill "\$OLD_PID" 2>/dev/null || true
+  fi
+  rm -f "\$WATCH_PID_FILE"
+fi
+
+# Start the watcher in the background. WAKE_PANE auto-enables in --loop.
+nohup bash "$REPO_ROOT/scripts/agent-watch.sh" "${role}" --loop \\
+  > "\$WATCH_LOG" 2>&1 &
+echo \$! > "\$WATCH_PID_FILE"
+WATCH_PID="\$(cat "\$WATCH_PID_FILE")"
+
+# Cleanup hook: when this bootstrap exits (claude quits or pane closes),
+# stop the background watcher so we don't leak daemons.
+cleanup_watcher() {
+  if [ -n "\$WATCH_PID" ] && kill -0 "\$WATCH_PID" 2>/dev/null; then
+    kill "\$WATCH_PID" 2>/dev/null || true
+  fi
+  rm -f "\$WATCH_PID_FILE"
+}
+trap cleanup_watcher EXIT INT TERM
+
 clear
 echo "═══════════════════════════════════════════════════════════"
 echo "  ${role_upper}"
 echo "  Repo: $REPO_ROOT"
 echo "  Soul: .claude/agents/${role}.md"
 echo "  Heartbeat: $HEARTBEAT_DIR/${role}.heartbeat"
+echo "  Watcher: PID \$WATCH_PID (log: \$WATCH_LOG)"
 echo "═══════════════════════════════════════════════════════════"
 echo ""
 echo "Claude Code otomatik başlatılıyor (--dangerously-skip-permissions)"
 echo "Soul: .claude/agents/${role}.md zaten diskte, bellekte yüklenecek"
+echo "Self-driving loop aktif: 60s'de bir GitHub poll, event çıkarsa pane uyanır."
 echo ""
 claude --dangerously-skip-permissions
+
+# Claude exit edince trap cleanup'ı çalıştırır. Sonra fallback bash.
 exec bash
 EOF
   chmod +x "$file"
