@@ -82,8 +82,14 @@ None. No DB, no Redis, no queues. `/healthz` is a liveness signal only.
 ### Process lifecycle
 
 - `make run` → uvicorn binds `127.0.0.1:8000` in foreground, logs `Uvicorn running on http://127.0.0.1:8000`.
-- `Ctrl-C` (SIGINT) → uvicorn shuts down gracefully, exits with status `0`, prints a clean shutdown line.
+- `Ctrl-C` (SIGINT) → uvicorn's own handler shuts down gracefully, exits with status `0`, prints a clean shutdown line. **We do not override SIGINT.**
+- `kill <pid>` (SIGTERM) → `app/main.py` registers a handler at module-import time (after `app` is constructed) that calls `os._exit(0)`. The handler exits with status `0` and **no traceback** on stderr. This is the contract the supervisor (k8s `terminationGracePeriodSeconds`, systemd, container `STOPSIGNAL`) sees when it asks the service to stop.
+  - **Why `os._exit(0)`, not `sys.exit(0)`**: the asyncio loop has a pending Starlette `lifespan` task awaiting `receive_queue.get()`. `sys.exit` raises `SystemExit`, which propagates and cancels the pending task — the cancellation surfaces as a `CancelledError` traceback on stderr, violating AC4. `os._exit()` is the C-level `_exit(2)` syscall; it bypasses `atexit`, `finally`, `SystemExit` propagation, and asyncio task cancellation, so the process exits cleanly with no log noise. Inline comment in `app/main.py` repeats the rationale at the implementation site.
+  - **Reversibility**: one-line revert. Trade-off is acceptable because process supervisors expect "exit fast" on SIGTERM, not graceful Python cleanup.
+  - **Pinned by tests**: `tests/test_sigterm_handler.py` (in-process) + `tests/test_lifecycle.py::test_sigterm_exits_zero` in PR #24 (subprocess end-to-end).
 - Unknown exception → uvicorn default 500; the design is intentionally not robust here (no `/healthz` deep checks, no global error handler in v1).
+
+**Architectural note (added retroactively, 2026-06-10, PR #26)**: the SIGTERM contract was not in the original STORY-001 spec. It was introduced as a fix for STORY-002's TC-8 (\`kill\` exits 143 instead of 0). The implementation deviates from the original PR #24 spec (\`sys.exit(0)\`) by using \`os._exit(0)\` — this deviation is architecturally correct (see \`os._exit\` rationale above) and was caught in tester review on \`c4daaab\`. **Future maintainers: do not \"clean up\" \`os._exit\` back to \`sys.exit\` — the traceback returns.**
 
 ## Sequence diagram
 
@@ -139,6 +145,7 @@ sequenceDiagram
 | 5 | Uvicorn import path mismatch between `make run` and README | Low | Medium | README and `make run` use the exact same string `uvicorn app.main:app --host 127.0.0.1 --port 8000` |
 | 6 | `pyproject.toml` `[project.optional-dependencies]` mismatch with what CI installs | Medium | CI red on green local | Pin the install command in `Makefile` (`uv sync --extra dev`); CI calls the same target |
 | 7 | AC4 (clean exit 0 on Ctrl-C) regresses if a startup task blocks shutdown | Low | Demo disruption | Uvicorn default behaviour is correct; add a SIGINT test if Sprint 2 lands lifecycle tests |
+| 8 | `kill <pid>` (SIGTERM) regresses from `os._exit(0)` to `sys.exit(0)` (the original PR #24 spec) and re-introduces a `CancelledError` traceback on shutdown | Low | High (breaks container/k8s/systemd graceful shutdown semantics + violates AC4) | Inline comment in `app/main.py` pins the rationale; design doc §Process lifecycle (this section) cross-references; `tests/test_sigterm_handler.py` mocks `os._exit` (not `sys.exit`), so a regression would flip a test red. If anyone proposes "let's use `sys.exit` for cleanliness", push back: see the asynclio `lifespan` rationale above. |
 
 ## Observability
 
