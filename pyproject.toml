@@ -1,0 +1,66 @@
+[project]
+name = "atilprojects"
+version = "0.1.0"
+description = "FastAPI service skeleton for the atilprojects hello-world template (Sprint 1, STORY-001)."
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+license = { text = "Proprietary" }
+authors = [{ name = "atil can", email = "atilcan65@users.noreply.github.com" }]
+keywords = ["fastapi", "sprint-1", "skeleton"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Framework :: FastAPI",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Internet :: WWW/HTTP :: WSGI :: Application",
+]
+
+# Runtime dependencies — pinned to exact versions per developer.md Hard-Rule §DO
+# (Dependency hygiene: don't add a new lib for what 10 lines of stdlib can do.)
+dependencies = [
+    "fastapi==0.115.6",
+    "uvicorn[standard]==0.32.1",
+]
+
+[project.optional-dependencies]
+# Dev-only deps. Install with: uv sync --extra dev
+dev = [
+    "httpx==0.28.1",   # used by FastAPI TestClient + direct HTTP in tests
+    "pytest==8.3.4",
+    "pytest-asyncio==0.25.0",
+    "ruff==0.9.9",     # lint + format
+]
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Ruff: single tool for lint + format. Sprint 1 keeps config minimal; widen
+# the rule set once the codebase has multiple modules.
+# ─────────────────────────────────────────────────────────────────────────────
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["app", "tests"]
+
+[tool.ruff.lint]
+# E/W: pycodestyle errors/warnings. F: pyflakes. I: isort. B: bugbear.
+# UP: pyupgrade. SIM: simplify. RUF: ruff-specific.
+select = ["E", "W", "F", "I", "B", "UP", "SIM", "RUF"]
+ignore = [
+    "E501",   # line length is enforced by the formatter, not the linter
+]
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Pytest: minimal config for Sprint 1. The full test surface (contract tests,
+# determinism, 404, etc.) lands in STORY-002.
+# ─────────────────────────────────────────────────────────────────────────────
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+addopts = [
+    "-ra",        # summary of all outcomes, even for passes
+    "--strict-markers",
+    "--strict-config",
+]
+filterwarnings = [
+    "error",      # any unhandled warning fails the suite
+]
