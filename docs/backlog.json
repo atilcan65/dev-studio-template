@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "version": 1,
+  "last_updated": "2026-06-10",
+  "sprint": 1,
+  "sprint_goal": "Stand up a minimal but production-shaped FastAPI service so the team has a working end-to-end loop (code → CI → deploy slot) for future stories.",
+  "scope_change": {
+    "id": "scope-change-001-persona-pivot",
+    "date": "2026-06-10",
+    "summary": "Persona pivot: Devon (backend dev) demoted to adjacent; Atil-in-2-weeks promoted to primary. STORY-004 STRETCH removed, promoted to in-scope P1.",
+    "routed_via": "GitHub issue (Scope-Change) + this field + inline notes in each story file"
+  },
+  "stories": [
+    {
+      "id": "STORY-001",
+      "title": "One-command runnable FastAPI service with /healthz",
+      "file": "docs/backlog/sprint-1/STORY-001-fastapi-skeleton-healthz.md",
+      "priority": "P0",
+      "type": "feature",
+      "agent": "architect",
+      "status": "ready",
+      "sprint": 1,
+      "tags": ["needs-design", "primary", "must-have", "persona-pivot-applied"],
+      "persona": "Atil-in-2-weeks",
+      "depends_on": [],
+      "blocks": ["STORY-002", "STORY-003", "STORY-004"]
+    },
+    {
+      "id": "STORY-002",
+      "title": "One-command local test suite (pytest)",
+      "file": "docs/backlog/sprint-1/STORY-002-pytest-one-command-tests.md",
+      "priority": "P0",
+      "type": "feature",
+      "agent": "tester",
+      "status": "ready",
+      "sprint": 1,
+      "tags": ["primary", "must-have", "persona-pivot-applied"],
+      "persona": "Atil-in-2-weeks",
+      "depends_on": ["STORY-001"],
+      "blocks": ["STORY-003"]
+    },
+    {
+      "id": "STORY-003",
+      "title": "GitHub Actions CI workflow on every PR",
+      "file": "docs/backlog/sprint-1/STORY-003-ci-github-actions.md",
+      "priority": "P1",
+      "type": "chore",
+      "agent": "developer",
+      "status": "ready",
+      "sprint": 1,
+      "tags": ["primary", "must-have", "persona-pivot-applied", "sensitive-path"],
+      "persona": "Atil-in-2-weeks,Maya",
+      "depends_on": ["STORY-001", "STORY-002"],
+      "blocks": []
+    },
+    {
+      "id": "STORY-004",
+      "title": "GET /hello/{name} greeting endpoint",
+      "file": "docs/backlog/sprint-1/STORY-004-hello-name-greeting-endpoint.md",
+      "priority": "P1",
+      "type": "feature",
+      "agent": "developer",
+      "status": "ready",
+      "sprint": 1,
+      "tags": ["primary", "must-have", "promoted-from-stretch-2026-06-10", "demo-anchor"],
+      "persona": "Atil-in-2-weeks",
+      "depends_on": ["STORY-001"],
+      "blocks": []
+    }
+  ]
+}
