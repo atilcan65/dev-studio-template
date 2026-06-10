@@ -62,11 +62,10 @@ echo "  Soul: .claude/agents/${role}.md"
 echo "  Heartbeat: $HEARTBEAT_DIR/${role}.heartbeat"
 echo "═══════════════════════════════════════════════════════════"
 echo ""
-echo "Claude Code başlatmak için: claude"
-echo "Sonra Claude içinde: /agents ${role}"
+echo "Claude Code otomatik başlatılıyor (--dangerously-skip-permissions)"
+echo "Soul: .claude/agents/${role}.md zaten diskte, bellekte yüklenecek"
 echo ""
-# Adım 16'da otomatize edilecek:
-# exec claude
+exec claude --dangerously-skip-permissions
 EOF
   chmod +x "$file"
 }
