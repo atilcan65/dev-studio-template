@@ -1,8 +1,21 @@
 #!/usr/bin/env bash
 # agent-watch.sh — GitHub-native autonomy: poll for new wake-up events for a role.
 #
-# Per ADR-0002: each agent's work queue lives on GitHub. This script queries the
-# queue, diffs against the agent's state file, and emits new events as JSON.
+# Per ADR-0002 + ADR-0003 (Event Model v2): each agent's work queue lives on
+# GitHub. This script queries the queue, diffs against the agent's state file,
+# and emits new events as JSON.
+#
+# Event Model v2 (ADR-0003):
+#   Event IDs include `headRefOid` (commit SHA) for PR events, so a new push
+#   to a PR where cc:<role> is active = new event = re-wake (fixes the
+#   "developer pushed fix but tester didn't re-verify" silent-failure class).
+#
+#   Stale-cc detector: if cc:<role> has been on a PR for > stale_threshold_sec
+#   without any state change, emit a `stale_cc` event so deadlocks self-heal.
+#
+#   Heartbeat: after each poll the watcher bumps `last_heartbeat_utc`. A side
+#   alarm (agent-doctor.sh / cron) raises a Telegram warn if a role's
+#   heartbeat is stale, so silent watcher death is impossible to miss.
 #
 # Usage:
 #   agent-watch.sh <role>           # one-shot: print new events JSON, exit
@@ -14,6 +27,8 @@
 #                   tmux pane via `tmux send-keys`. Auto-enabled in --loop mode.
 #                   Override with WAKE_PANE=0 to disable.
 #   TMUX_SESSION  — session name to address (default: dev-studio)
+#   STALE_CC_SEC  — seconds before cc:<role> on an unchanged PR is "stale"
+#                   (default: 900 = 15 min)
 #
 # Output (JSON, to stdout):
 #   {
@@ -22,7 +37,7 @@
 #     "new_events": [
 #       {
 #         "id": "<unique event id>",
-#         "kind": "issue_assigned|pr_review_requested|pr_comment_mention|label_change",
+#         "kind": "issue_assigned|pr_review_requested|pr_new_commit|pr_comment_mention|stale_cc|label_change",
 #         "number": <int>,
 #         "title": "<str>",
 #         "url": "<str>",
@@ -47,6 +62,7 @@ STATE_HELPER="$SCRIPT_DIR/agent-state.sh"
 ROLE="${1:-}"
 MODE="${2:---once}"
 TMUX_SESSION="${TMUX_SESSION:-dev-studio}"
+STALE_CC_SEC="${STALE_CC_SEC:-900}"
 # WAKE_PANE: 0/1. Auto-enabled in --loop mode unless explicitly set to 0.
 WAKE_PANE_DEFAULT=0
 [ "$MODE" = "--loop" ] && WAKE_PANE_DEFAULT=1
@@ -115,22 +131,53 @@ query_assigned_issues() {
 }
 
 query_review_requests() {
-  # PRs with label cc:<role>, open, updated since last_seen.
+  # PRs with label cc:<role>, open.
+  # Event ID includes headRefOid (commit SHA) — a new push on an assigned PR
+  # therefore yields a new event ID, breaking the dedup tie and waking the agent.
+  # This is the v2 fix for the "developer pushed fix but tester didn't re-verify"
+  # silent-failure bug.
   gh pr list \
     --repo "$REPO" \
     --label "cc:${ROLE}" \
     --state open \
     --limit 50 \
-    --json number,title,url,updatedAt,isDraft,labels,headRefName \
-    --jq "[ .[] | select(.updatedAt > \"$LAST_SEEN\") |
+    --json number,title,url,updatedAt,isDraft,labels,headRefName,headRefOid \
+    --jq "[ .[] |
            {
-             id: (\"pr-review-\" + (.number | tostring) + \"-\" + .updatedAt),
+             id: (\"pr-review-\" + (.number | tostring) + \"-\" + (.headRefOid[0:7]) + \"-\" + .updatedAt),
              kind: \"pr_review_requested\",
              number: .number,
              title: .title,
              url: .url,
              updated_at: .updatedAt,
-             context: { isDraft: .isDraft, branch: .headRefName, labels: [.labels[].name] }
+             context: {
+               isDraft: .isDraft,
+               branch: .headRefName,
+               head_sha: .headRefOid[0:7],
+               labels: [.labels[].name]
+             }
+           } ]"
+}
+
+query_new_commits_on_assigned_prs() {
+  # Explicit "new commit on cc:<role> PR" event — covers the case where
+  # updatedAt didn't change enough to clear last_seen but the commit SHA did.
+  # Belt-and-suspenders with query_review_requests; either firing wakes the agent.
+  gh pr list \
+    --repo "$REPO" \
+    --label "cc:${ROLE}" \
+    --state open \
+    --limit 50 \
+    --json number,title,url,updatedAt,headRefOid,headRefName \
+    --jq "[ .[] |
+           {
+             id: (\"pr-commit-\" + (.number | tostring) + \"-\" + (.headRefOid[0:7])),
+             kind: \"pr_new_commit\",
+             number: .number,
+             title: .title,
+             url: .url,
+             updated_at: .updatedAt,
+             context: { head_sha: .headRefOid[0:7], branch: .headRefName }
            } ]"
 }
 
@@ -150,7 +197,7 @@ query_pr_mentions() {
     gh pr view "$num" --repo "$REPO" --json number,title,url,comments,reviews \
       --jq "
         ([.comments[], .reviews[]] |
-         map(select(.body != null and (.body | test(\"@${ROLE}\\\b\"; \"i\"))) |
+         map(select(.body != null and (.body | test(\"@${ROLE}\\\\b\"; \"i\"))) |
              select(.createdAt > \"$LAST_SEEN\" or .submittedAt > \"$LAST_SEEN\")) |
          map({
            id: (\"pr-mention-\" + (\$num | tostring) + \"-\" + (.id // (.createdAt // .submittedAt))),
@@ -166,6 +213,43 @@ query_pr_mentions() {
          }))" \
       --jq-arg num "$num" 2>/dev/null || true
   done | jq -s 'add // []'
+}
+
+query_stale_cc() {
+  # Deadlock breaker: if cc:<role> has sat on a PR for > STALE_CC_SEC without
+  # any state change (no new commit, no new review, no label flip), emit a
+  # stale_cc event. The agent picks it up and either acts or explicitly punts
+  # the label back. Prevents permanent stall when an event was lost (watcher
+  # restart, tmux send-keys race, processed_event_ids corruption).
+  #
+  # The event ID is bucketed by 5-minute windows so the same stall doesn't
+  # spam wake-ups every poll — it re-fires at most every ~5 min until cleared.
+  local now_epoch bucket
+  now_epoch="$(date -u +%s)"
+  bucket=$(( now_epoch / 300 ))
+
+  gh pr list \
+    --repo "$REPO" \
+    --label "cc:${ROLE}" \
+    --state open \
+    --limit 50 \
+    --json number,title,url,updatedAt,headRefOid \
+    --jq "[ .[] |
+           ((now - (.updatedAt | fromdateiso8601)) | floor) as \$age |
+           select(\$age > ${STALE_CC_SEC}) |
+           {
+             id: (\"stale-cc-\" + (.number | tostring) + \"-\" + (.headRefOid[0:7]) + \"-b${bucket}\"),
+             kind: \"stale_cc\",
+             number: .number,
+             title: .title,
+             url: .url,
+             updated_at: .updatedAt,
+             context: {
+               age_sec: \$age,
+               head_sha: .headRefOid[0:7],
+               note: \"cc:${ROLE} unchanged for >${STALE_CC_SEC}s; deadlock-breaker wake.\"
+             }
+           } ]"
 }
 
 # Orchestrator has a wider lens: all label changes on any issue/PR.
@@ -246,16 +330,22 @@ poll_once() {
   local now
   now="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
 
-  local assigned reviews mentions board
+  # Heartbeat FIRST — even if the rest fails, doctor can see we're alive.
+  "$STATE_HELPER" heartbeat "$ROLE" >/dev/null 2>&1 || true
+
+  local assigned reviews commits mentions stale board
   assigned="$(query_assigned_issues || echo '[]')"
   reviews="$(query_review_requests || echo '[]')"
+  commits="$(query_new_commits_on_assigned_prs || echo '[]')"
   mentions="$(query_pr_mentions 2>/dev/null || echo '[]')"
+  stale="$(query_stale_cc 2>/dev/null || echo '[]')"
   board="$(query_board_changes || echo '[]')"
 
   # Merge and dedupe
   local merged
   merged="$(jq -s 'add | unique_by(.id)' \
-    <(echo "$assigned") <(echo "$reviews") <(echo "$mentions") <(echo "$board"))"
+    <(echo "$assigned") <(echo "$reviews") <(echo "$commits") \
+    <(echo "$mentions") <(echo "$stale") <(echo "$board"))"
 
   # Filter out events already in processed_event_ids
   local state_file new_events
@@ -286,6 +376,9 @@ poll_once() {
   echo "$new_events" | jq -r '.[].id' | while read -r eid; do
     [ -n "$eid" ] && "$STATE_HELPER" mark "$ROLE" "$eid"
   done
+
+  # Trim processed_event_ids to keep state file bounded (default: keep last 50).
+  "$STATE_HELPER" trim "$ROLE" >/dev/null 2>&1 || true
 
   # Wake the tmux pane if events arrived and wake mode is on.
   if [ "$WAKE_PANE" = "1" ]; then
