@@ -65,7 +65,8 @@ echo ""
 echo "Claude Code otomatik başlatılıyor (--dangerously-skip-permissions)"
 echo "Soul: .claude/agents/${role}.md zaten diskte, bellekte yüklenecek"
 echo ""
-exec claude --dangerously-skip-permissions
+claude --dangerously-skip-permissions
+exec bash
 EOF
   chmod +x "$file"
 }
