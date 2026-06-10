@@ -108,6 +108,77 @@ Bunlarda: `scripts/notify.sh -l human "<eskalasyon nedeni> + öneri + link"`.
 
 Insan "kurye" değil. Insan **gate-keeper**. Sen agent olarak peer'larınla doğrudan konuşmalısın — GitHub + Telegram + heartbeat senin iletişim kanallarındır. Insan sadece merge/scope-change kararı verir.
 
+## Autonomy Loop — GitHub-native wake-up (ADR-0002)
+
+**TL;DR**: Senin work queue'n GitHub'ın kendisi. `scripts/agent-watch.sh <your-role>` ile her 60 saniyede bir kendi queue'una bak. İnsanın seni uyandırmasını bekleme.
+
+### Why this exists
+
+`scripts/notify.sh` Telegram'a yazar. Telegram'ı **insan** okur, agent'lar okumaz. Yani Auto-Ping tek başına yetmez — peer agent ping'i görmez. Bu boşluğu GitHub kapatır: her ping'in **bir GitHub artefact eşi** vardır (issue label, PR comment, mention, label change). Agent'lar bunu polling ile fark eder.
+
+### The loop (her session başında, her aksiyon sonrası)
+
+```bash
+bash scripts/agent-watch.sh <your-role>
+```
+
+Çıktı JSON:
+
+```json
+{
+  "role": "<your-role>",
+  "polled_at_utc": "...",
+  "new_events": [
+    { "id": "...", "kind": "issue_assigned|pr_review_requested|pr_comment_mention|label_change",
+      "number": 42, "title": "...", "url": "...", "updated_at": "...",
+      "context": { ... } }
+  ],
+  "next_poll_sec": 60
+}
+```
+
+`new_events` boşsa: 60 saniye uyu, tekrar bak. Dolu ise: her event için aksiyon al, sonra tekrar bak.
+
+### Trigger → action mapping (kind-by-kind)
+
+| `kind` | Anlamı | Senin aksiyonun |
+|---|---|---|
+| `issue_assigned` | Sana `agent:<your-role>` label'lı yeni iş atandı | Story'i oku, branch aç, çalışmaya başla |
+| `pr_review_requested` | `cc:<your-role>` label'lı bir PR review bekliyor | PR'ı oku, review yap, comment + auto-ping |
+| `pr_comment_mention` | Bir peer comment'inde sana `@<your-role>` diye seslendi | Comment'i oku, ilgili aksiyonu al veya yanıt yaz |
+| `label_change` | (Orchestrator-only lens) Board'da bir label değişti | Sprint plan / WIP limit kontrolü |
+
+### State management
+
+- State dosyan: `/var/log/dev-studio/agent-state/<your-role>.json`
+- `agent-watch.sh` her event'i otomatik olarak `processed_event_ids` listesine ekler — aynı event'i iki kez işlemezsin
+- `last_seen_utc` her poll sonrası güncellenir
+- Eğer event'i yanlışlıkla skip ettiğini düşünüyorsan: state file'ı manuel edit et veya `scripts/agent-state.sh set <role> last_seen_utc <ISO-timestamp>` ile geri sar
+
+### Polling cadence
+
+- **Varsayılan**: 60 saniye (`AGENT_POLL_INTERVAL_SEC=60`)
+- **Burst mode**: aktif iş yaparken (PR review yazma, test koşturma, vb.) loop pause edilir; iş bitince devam eder
+- **Hızlandırma**: kritik handoff bekliyorsan `scripts/agent-state.sh set <role> poll_interval_sec 15` ile 15s'ye düşür, sonra geri al
+
+### What you do NOT do
+
+- ❌ İnsanın "şimdi şu story'e başla" demesini bekleme — atandığında **kendiliğinden** başla
+- ❌ Aynı event'i tekrar tekrar işleme — `processed_event_ids` zaten engelliyor, ama tool call'larını tekrar etme
+- ❌ Polling'i 30 saniyenin altına düşürme — GitHub API rate limit
+- ❌ State dosyasını sil/reset etme — last_seen ileri sarılı, geçmiş event'ler kaybolur
+- ❌ İnsan'a "polling yapayım mı?" diye sorma — ADR-0002 zaten karar verildi, sen sadece uygula
+
+### Coupling with Auto-Ping Hard-Rule
+
+Auto-Ping (`notify.sh`) ve Autonomy Loop (`agent-watch.sh`) **birlikte** çalışır:
+
+1. Sen iş bitirip Auto-Ping atarsın → Telegram'a düşer (insan görür) **VE** GitHub'da label/comment olarak işlenir (peer görür)
+2. Peer agent kendi `agent-watch.sh` loop'unda bu GitHub artefact'i fark eder → wake-up sinyali
+3. Peer aksiyon alır → kendi Auto-Ping'ini atar → cycle devam eder
+
+**Kural**: her `notify.sh` çağrısı *aynı zamanda* bir GitHub artefact'i tetiklemelidir (label ekleme, comment yazma, assignee/cc değiştirme). Sadece Telegram'a yazıp GitHub'a yazmamak = peer'ı uyandırmamak.
+
 ## Things agents must NEVER do
 - Push directly to `main`.
 - Merge their own PRs.

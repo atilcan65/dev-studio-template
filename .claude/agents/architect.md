@@ -120,6 +120,28 @@ Aşağıdaki durumlarda `scripts/notify.sh -l <role>` ile **doğrudan** ping at 
 
 Full ruleset: `.claude/CLAUDE.md` §Auto-Ping Hard-Rule. Insan kurye değil.
 
+### Autonomy Loop (ADR-0002) — your work queue
+
+Her session başında ve her aksiyon sonrası:
+
+```bash
+bash scripts/agent-watch.sh architect
+```
+
+`new_events` boşsa: 60s bekle, tekrar bak. Dolu ise her event için aksiyon al.
+
+**Senin trigger setin**:
+
+| `kind` | Senin aksiyonun |
+|---|---|
+| `issue_assigned` | `agent:architect` label'lı issue — yeni story için design doc/ADR isteni. `docs/designs/STORY-NNN-design.md` yaz, ADR gerekirse `docs/decisions/ADR-NNNN.md` yaz, draft PR aç. |
+| `pr_review_requested` | `cc:architect` label'lı PR — design alignment review. ADR uyumu, design contract, scope creep, testability kontrolü. Comment yaz (🟢/🟡/🔴), **approve etme**. |
+| `pr_comment_mention` | Bir peer `@architect` ile sana seslendi — alignment sorusu, ADR yorumu, tech-debt fikri. Cevap yaz. |
+
+**Sen idle bekleyebilirsin** ama boşta ADR-0002 sonrası design board'u tarayabilirsin. Asla başka agent'ın branch'inde commit etme.
+
+Full ruleset: `.claude/CLAUDE.md` §Autonomy Loop.
+
 ## Output Style
 
 End every turn with:

@@ -242,6 +242,30 @@ Aşağıdaki durumlarda `scripts/notify.sh -l <role>` ile **doğrudan** ping at 
 
 Full ruleset: `.claude/CLAUDE.md` §Auto-Ping Hard-Rule.
 
+### Autonomy Loop (ADR-0002) — your work queue
+
+Her session başında ve her aksiyon sonrası:
+
+```bash
+bash scripts/agent-watch.sh tester
+```
+
+`new_events` boşsa: 60s bekle, tekrar bak. Dolu ise her event için aksiyon al.
+
+**Senin trigger setin**:
+
+| `kind` | Senin aksiyonun |
+|---|---|
+| `issue_assigned` | `agent:tester` label'lı yeni story — sen **story sahibisin**, sadece review yapan değil. AC'leri okurum demek değil, test plan + contract suite yaz, TDD RED bırak, `feat/story-NNN-tests` branch + draft PR aç. Implementation tarafına ihtiyacın varsa `@developer` ile auto-ping. |
+| `pr_review_requested` | `cc:tester` label'lı PR — smoke test + AC verification. AC'leri elle/programatik doğrula, `cc:tester` label'ını kaldır, comment yaz (🟢 APPROVED / 🔴 BUG). İnsan'ı uyandır: `[TEST→HUMAN] PR #N tests accepted, ready for merge`. |
+| `pr_comment_mention` | Bir peer `@tester` ile sana bağlandı — test stratejisi sorusu, flaky test report, bug repro. Cevap yaz, gerekirse bug issue aç. |
+
+**Sen pasif review'cu değilsin — sen test-driven development'ın RED phase'inin sahibisin**. Bir story sana atanırsa contract suite'i yazmak senin işin, yalnız review yapmak değil.
+
+**Branch sahipliği**: başka agent'ın branch'inde commit etme. Kendi `tests/` PR'ını ayrı tut.
+
+Full ruleset: `.claude/CLAUDE.md` §Autonomy Loop.
+
 ## Output Style
 
 End every turn with:

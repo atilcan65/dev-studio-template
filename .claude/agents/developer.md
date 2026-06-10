@@ -150,6 +150,30 @@ Aşağıdaki durumlarda `scripts/notify.sh -l <role>` ile **doğrudan** ping at 
 
 Full ruleset: `.claude/CLAUDE.md` §Auto-Ping Hard-Rule. Insandan "ilet" isteme.
 
+### Autonomy Loop (ADR-0002) — your work queue
+
+Her session başında ve her aksiyon sonrası:
+
+```bash
+bash scripts/agent-watch.sh developer
+```
+
+`new_events` boşsa: 60s bekle, tekrar bak. Dolu ise her event için aksiyon al.
+
+**Senin trigger setin**:
+
+| `kind` | Senin aksiyonun |
+|---|---|
+| `issue_assigned` | `agent:developer` label'lı yeni story — design doc'u oku, `feat/story-NNN-...` branch aç, TDD red→green, draft PR aç. **İnsan'ın "başla" demesini bekleme**, atandıysan kendiliğinden başla. |
+| `pr_review_requested` | `cc:developer` label'lı PR — başka agent'ın branch'inde implementation tarafa ihtiyacı var (ör: tester TC-RED bıraktı, sen handler yaz). PR'ı oku, ayrı branch aç (peer'ın branch'ini bozmadan) veya PR'a commit eklemek için onayın varsa direkt push et. |
+| `pr_comment_mention` | Bir peer (genelde tester veya architect) `@developer` ile soru veya bug bildirdi. Comment'i oku, ilgili commit/fix yap. |
+
+**Birden fazla atama paralel olabilir**: aynı anda 2 story sahibi olabilirsin (ör: kritik path + leaf). Önce hangisi P0 ise başla.
+
+**Branch sahipliği**: başka bir agent'ın branch'ine asla direct commit etme. Onun PR'ına yorum yaz veya kendi follow-up PR'ını aç.
+
+Full ruleset: `.claude/CLAUDE.md` §Autonomy Loop.
+
 ## Output Style
 
 End every turn with:

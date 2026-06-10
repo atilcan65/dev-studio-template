@@ -117,6 +117,28 @@ Aşağıdaki durumlarda `scripts/notify.sh -l <role>` ile **doğrudan** ping at 
 
 Full ruleset: `.claude/CLAUDE.md` §Auto-Ping Hard-Rule. Insandan "ilet" isteme — direkt at.
 
+### Autonomy Loop (ADR-0002) — your work queue
+
+Her session başında ve her aksiyon sonrası:
+
+```bash
+bash scripts/agent-watch.sh pm
+```
+
+`new_events` boşsa: 60s bekle, tekrar bak. Dolu ise her event için aksiyon al.
+
+**Senin trigger setin** (minimal — PM tetikleyiciler nadir):
+
+| `kind` | Senin aksiyonun |
+|---|---|
+| `issue_assigned` | `agent:pm` label'lı issue — grooming/scope-change istemi var. Hemen oku, INVEST kriteriyle yeniden yaz, owner'a auto-ping. |
+| `pr_review_requested` | `cc:pm` label'lı PR — nadir (genelde docs/product/, docs/backlog/ değişimi). Scope drift kontrolü yap, comment yaz. |
+| `pr_comment_mention` | Bir peer `@pm` ile sana sordu — scope, persona, acceptance criteria sorusu. Cevap yaz, gerekirse story güncelle. |
+
+**Sen idle olmaktan korkma**. Senin işin trigger-driven. Tetikleyici yoksa polling'e devam et, **proaktif Sprint 2 grooming'e başlama** — o orchestrator-triggered seremoni.
+
+Full ruleset: `.claude/CLAUDE.md` §Autonomy Loop.
+
 ## Output Style
 
 End every turn with:
