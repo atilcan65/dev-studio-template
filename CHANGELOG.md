@@ -6,6 +6,21 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- **STORY-002 — `app/main.py` now registers a SIGTERM handler (TC-8 unblock).**
+  `kill <pid>` (SIGTERM) on the uvicorn process used to exit with code
+  `143` (= 128 + SIGTERM), which breaks container/k8s/systemd graceful
+  shutdown. The handler is installed at module-import time and calls
+  `os._exit(0)` (C-level `_exit(2)`), mirroring uvicorn's own SIGINT
+  behaviour without raising `SystemExit` — this avoids a `CancelledError`
+  traceback from the asyncio loop's pending Starlette `lifespan` task,
+  satisfying STORY-001 AC4 ("no traceback on shutdown"). No-op for
+  Ctrl-C development; load-bearing the moment the service ships to a
+  process supervisor. See PR #24 (`test_sigterm_exits_zero`) for the
+  subprocess-level regression pin and PR #25 / `tests/test_sigterm_handler.py`
+  for the in-process pin.
+
 ### Added
 
 - **STORY-001 — FastAPI service skeleton with `GET /healthz`** (Sprint 1, P0).

@@ -11,6 +11,9 @@ Contract pin (do NOT change without a design pass — see ADR-0001):
   probe (DB ping, downstream HTTP) is a separate story, not an in-place edit.
 """
 
+import os
+import signal
+
 from fastapi import FastAPI, Path
 
 from app import __version__
@@ -45,3 +48,39 @@ def hello(
     - Name is capped at 64 chars to bound log-spam risk.
     """
     return {"message": f"hello, {name}"}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SIGTERM handler (STORY-002 TC-8 unblock).
+# Without this, `kill <pid>` (SIGTERM) exits the uvicorn process with
+# code 143 (= 128 + SIGTERM), which breaks container/k8s/systemd graceful
+# shutdown and is the canonical RED in PR #24's test_sigterm_exits_zero.
+# We register os._exit(0) at module-import time, after the app is fully
+# constructed, so a `kill` on the uvicorn process exits 0 like SIGINT does.
+#
+# Why os._exit (C-level _exit(2)) instead of sys.exit (which raises
+# SystemExit): the asyncio event loop has a pending Starlette `lifespan`
+# task awaiting receive_queue.get(). When SystemExit propagates, that
+# pending task is cancelled, and the cancellation cascades into a
+# CancelledError traceback on stderr — which violates STORY-001 AC4
+# ("prints a clean shutdown line (no traceback)"). os._exit() bypasses
+# Python cleanup (no atexit, no finally chains, no SystemExit propagation),
+# so the loop's pending tasks get terminated with the process, not
+# cancelled. No traceback, exit 0, clean.
+#
+# Side-effect scope: SIGTERM only; SIGINT keeps uvicorn's own handler
+# (which already exits 0 — see PR #24's TC-7 green).
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _handle_sigterm(signum: int, frame: object) -> None:
+    """SIGTERM handler — exit cleanly with code 0 (mirrors SIGINT/uvicorn).
+
+    Uses os._exit(0) (C-level _exit(2)) so the asyncio loop's pending
+    tasks don't log a CancelledError traceback on shutdown. Scope: SIGTERM
+    only. SIGINT keeps uvicorn's own handler.
+    """
+    os._exit(0)  # intentional: bypass Python cleanup (see module-level comment)
+
+
+signal.signal(signal.SIGTERM, _handle_sigterm)
