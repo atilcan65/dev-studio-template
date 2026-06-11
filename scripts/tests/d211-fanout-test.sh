@@ -245,6 +245,49 @@ got11d=$(env -u PR_MERGED_FANOUT_DEFAULT PR_MERGED_FANOUT_DEFAULT="" bash -c "
   fi
 " 2>/dev/null)
 check "Test 11.4: kill switch disables default-fanout wake" "OK: orchestrator not in default fanout (kill switch works)" "$got11d"
+# Test 12-14 (issue #53): regression-protection tests for pr_labeled fanout
+# Per issue #53 AC: 3 test blocks covering hazards identified in D2.2 review.
+# All 3 implementations are on main post-PR #49 — these tests lock the
+# contract against future refactors. Issue says "insert after the existing
+# S4-PR-Open 1-5 block from PR #51"; since PR #51 is still draft, insert
+# here after the existing Test 10. When PR #51 lands, the file order will
+# be: Tests 1-10 (existing) → S4-PR-Open 1-5 (from #51) → S12-14 (here).
+# ============================================================
+echo ""
+
+# Test 12: Kill-switch (PR_LABELED_FANOUT="") — BUG-1 regression guard.
+# Per issue #53: BUG-1 (PR #49 commit 6823193) was a silent kill-switch
+# failure. Without an explicit test, a future refactor could re-introduce
+# the `:` and the empty-disable contract would silently break again.
+echo "=== Test 12: PR_LABELED_FANOUT=\"\" disables path (BUG-1 regression guard) ==="
+PR_LABELED_FANOUT=""
+check "architect query CLOSED (empty fanout)" skip "$(call role_receives_pr_labeled architect)"
+check "tester query CLOSED (empty fanout)"    skip "$(call role_receives_pr_labeled tester)"
+PR_LABELED_FANOUT="architect tester"
+
+# Test 13: Near-miss labels — Issue #47 regex-bug regression guard.
+# Per issue #53: Issue #47's original AC had a regex bug that would match
+# `needs-architect-review-v2`, `architect-review`, etc. The fix moved to
+# exact-name match (ADR-0009 § 2.1 / § 2.6). Without an explicit test, a
+# future "let me make this fuzzier" refactor could regress silently.
+echo ""
+echo "=== Test 13: near-miss labels — exact-match semantics (#47 regex-bug guard) ==="
+LABELS='["needs-architect","needs-architect-review-v2","architect-review"]'
+check "architect SKIPS near-miss labels" skip "$(call role_wakes_for_pr_labeled architect "$LABELS")"
+LABELS='["needs-tester","tester-signoff","needs-tester-review"]'
+check "tester SKIPS near-miss labels"    skip "$(call role_wakes_for_pr_labeled tester "$LABELS")"
+
+# Test 14: Defensive — empty + lifecycle-only label sets.
+# Per issue #53: cheap defensive coverage; guards against helper accidentally
+# treating non-wake labels as wake.
+echo ""
+echo "=== Test 14: defensive — empty + lifecycle-only labels ==="
+LABELS='[]'
+check "architect SKIPS empty labels"          skip "$(call role_wakes_for_pr_labeled architect "$LABELS")"
+check "tester SKIPS empty labels"             skip "$(call role_wakes_for_pr_labeled tester "$LABELS")"
+LABELS='["type:feature","priority:P2","sprint:current"]'
+check "architect SKIPS lifecycle-only labels" skip "$(call role_wakes_for_pr_labeled architect "$LABELS")"
+check "tester SKIPS lifecycle-only labels"    skip "$(call role_wakes_for_pr_labeled tester "$LABELS")"
 
 echo ""
 echo "======================================"
