@@ -294,3 +294,31 @@ reference **both** ADR-0008 and ADR-0009 as the canonical pattern.
 - **Reverse — fire on label *removal***. Today, removing `needs-architect-review`
   after review is silent. We could add `pr_labeled_removed` as a separate
   event type. Not required by any current workflow.
+
+---
+
+## 9. BUG-1 sibling closure (issue #52)
+
+The kill-switch idiom in § 6 (`PR_LABELED_FANOUT=""` to disable) uses
+`${VAR-default}` (unset-only fallback) precisely because the bash
+`${VAR:-default}` operator would silently re-default on empty string and
+break the documented contract. This is a **template-grade lesson**: every
+fanout env var in the watcher/doctor must use the same form.
+
+**BUG-1 (PR #49, commit 6823193)**: applied the lesson to
+`PR_LABELED_FANOUT` in this ADR's reference impl. Fixed.
+
+**BUG-1 sibling (issue #52)**: the pre-existing
+`PR_MERGED_FANOUT_DEFAULT="${PR_MERGED_FANOUT_DEFAULT:-orchestrator product-manager developer}"`
+at `scripts/agent-watch.sh:179` and `scripts/agent-doctor.sh:294` carried
+the same landmine. The user-facing contract in
+`agent-doctor.sh:476` (`PR_MERGED_FANOUT_DEFAULT=""` → "rules-only mode")
+was broken by the implementation. Fixed in the follow-up PR for issue #52
+(same one-line `:-` → `-` change as BUG-1, applied to both sites).
+
+**TD-003** (added retroactively): audit ALL bash env-var defaults in
+`scripts/agent-watch.sh` and `scripts/agent-doctor.sh` for `${VAR:-default}`
+patterns where the env var is documented as a kill switch. Any other
+instances are landmines of the same shape. Owner: @architect (next retro).
+Resolution: either fix (if kill-switch) or document (if default fallback is
+the intended contract).

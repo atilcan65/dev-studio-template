@@ -291,7 +291,11 @@ fanout_mode() {
   # than parse, we re-declare the defaults + functions here so doctor stays
   # standalone if agent-watch.sh ever moves. Behaviour MUST match the watcher
   # exactly (unit-tested at /tmp/d211-fanout-test.sh).
-  PR_MERGED_FANOUT_DEFAULT="${PR_MERGED_FANOUT_DEFAULT:-orchestrator product-manager developer}"
+  # Issue #52 (BUG-1 sibling): empty string must disable the default fanout
+  # (kill switch per ADR-0008 § 6). Using `${VAR-default}` (not `${VAR:-default}`)
+  # so empty string is honored and only the unset case falls back to default.
+  # Same fix as BUG-1 for PR_LABELED_FANOUT in PR #49 (commit 6823193).
+  PR_MERGED_FANOUT_DEFAULT="${PR_MERGED_FANOUT_DEFAULT-orchestrator product-manager developer}"
   PR_MERGED_FANOUT_RULES_ENABLED="${PR_MERGED_FANOUT_RULES_ENABLED:-true}"
 
   role_in_default_fanout() {

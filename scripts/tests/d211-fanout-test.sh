@@ -114,5 +114,58 @@ echo ""
 echo "======================================"
 echo "PASS=$PASS  FAIL=$FAIL"
 echo "======================================"
+
+# ============================================================
+# Test 11 (issue #52, BUG-1 sibling):
+# PR_MERGED_FANOUT_DEFAULT kill switch — same `:-` vs `-` landmine
+# as BUG-1 (fixed in PR #49 for PR_LABELED_FANOUT).
+#
+# With `${VAR:-default}` (BUGGY): empty string is re-defaulted → kill switch breaks.
+# With `${VAR-default}`  (FIXED):  empty string is preserved     → kill switch works.
+#
+# These tests are TDD-red on the current code (PR_MERGED_FANOUT_DEFAULT=:-)
+# and TDD-green after the fix. Test 3/4 verify the actual files, not just
+# the bash idiom.
+# ============================================================
+echo ""
+echo "=== Test 11: PR_MERGED_FANOUT_DEFAULT kill switch (BUG-1 sibling) ==="
+
+# Test 1: bash idiom — empty is preserved with `${VAR-default}` (not `:-`)
+got11a=$(env -u PR_MERGED_FANOUT_DEFAULT bash -c 'PR_MERGED_FANOUT_DEFAULT="$1"; PR_MERGED_FANOUT_DEFAULT="${PR_MERGED_FANOUT_DEFAULT-orchestrator product-manager developer}"; echo -n "$PR_MERGED_FANOUT_DEFAULT"' _ "")
+check "Test 11.1: empty kill switch preserved (\${VAR-default})" "" "$got11a"
+
+# Test 2: bash idiom — unset falls back to default
+got11b=$(env -u PR_MERGED_FANOUT_DEFAULT bash -c 'PR_MERGED_FANOUT_DEFAULT="${PR_MERGED_FANOUT_DEFAULT-orchestrator product-manager developer}"; echo -n "$PR_MERGED_FANOUT_DEFAULT"')
+check "Test 11.2: unset falls back to default" "orchestrator product-manager developer" "$got11b"
+
+# Test 3: integration — source agent-watch.sh helpers with empty env, check var
+# Uses the BUGGY `:-` operator on main today; expected FAIL pre-fix, PASS post-fix.
+WATCH="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/agent-watch.sh"
+got11c=$(env -u PR_MERGED_FANOUT_DEFAULT PR_MERGED_FANOUT_DEFAULT="" bash -c "
+  awk '/^# v3\.1 \(ADR-0008\)/,/^# --- query builders/' '$WATCH' > /tmp/d211-helpers-test11.sh
+  source /tmp/d211-helpers-test11.sh
+  echo -n \"\$PR_MERGED_FANOUT_DEFAULT\"
+" 2>/dev/null)
+check "Test 11.3: agent-watch.sh honors empty PR_MERGED_FANOUT_DEFAULT (kill switch on)" "" "$got11c"
+
+# Test 4: integration — kill-switch effect on the default fanout function.
+# Sources the helpers from agent-watch.sh with PR_MERGED_FANOUT_DEFAULT=""
+# in the env. With the BUGGY `:-`, the var gets re-defaulted and
+# role_in_default_fanout returns true for orchestrator (kill switch broken).
+# With the FIXED `-`, the var stays empty and orchestrator is NOT in default
+# (kill switch works). This is the behavior users actually care about.
+got11d=$(env -u PR_MERGED_FANOUT_DEFAULT PR_MERGED_FANOUT_DEFAULT="" bash -c "
+  source <(awk '/^# v3\.1 \(ADR-0008\)/,/^# --- query builders/' '$WATCH')
+  if role_in_default_fanout orchestrator; then
+    echo 'BUG: orchestrator in default fanout (kill switch broken)'
+  else
+    echo 'OK: orchestrator not in default fanout (kill switch works)'
+  fi
+" 2>/dev/null)
+check "Test 11.4: kill switch disables default-fanout wake" "OK: orchestrator not in default fanout (kill switch works)" "$got11d"
+
+echo ""
+echo "======================================"
+echo "PASS=$PASS  FAIL=$FAIL"
+echo "======================================"
 [ "$FAIL" -eq 0 ]
-EOF
