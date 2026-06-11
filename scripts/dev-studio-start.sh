@@ -41,12 +41,23 @@ ensure_heartbeat_dir() {
 }
 
 # Write a bootstrap shell file for an agent role.
-# Pane lifecycle:
-#   1. set tmux title
-#   2. spawn agent-watch.sh --loop in background (writes PID file)
-#   3. run claude foreground
-#   4. on claude exit: kill the background watcher (cleanup hook)
-#   5. exec bash so the pane stays alive (fallback shell)
+#
+# Pane lifecycle has two modes (resolved at pane start, not at write-time):
+#
+#   - **systemd mode** (ADR-0006, preferred): the watcher is managed by
+#     dev-studio-watcher@<role>.service. The pane does NOT spawn a watcher,
+#     does NOT install a cleanup trap, and merely reports the unit status
+#     in the banner. Watcher lives across pane/claude lifecycle.
+#
+#   - **nohup fallback mode** (legacy, used when units are not installed):
+#     the pane spawns agent-watch.sh --loop in the background, writes a
+#     PID file, and kills the watcher when claude exits. This was the
+#     pre-D4 default and is retained so the script still works on hosts
+#     where dev-studio-install-systemd.sh has not been run.
+#
+# Mode detection is `systemctl --user is-enabled dev-studio-watcher@<role>`,
+# done at pane bootstrap time so a fresh `install` doesn't require re-running
+# this script.
 write_agent_bootstrap() {
   local role="$1"
   local file="$BOOT_DIR/${role}.sh"
@@ -60,36 +71,51 @@ cd "$REPO_ROOT"
 [ -f "$ENV_FILE" ] && source "$ENV_FILE"
 touch "$HEARTBEAT_DIR/${role}.heartbeat"
 
-# --- agent-watch background loop (ADR-0002 §Self-Driving Loop) ---
-# Spawn the poller so the pane self-drives even when Claude is idle.
-# Loop writes its PID to <role>.watch.pid; we kill it on Claude exit.
 WATCH_LOG="$HEARTBEAT_DIR/${role}.watch.log"
-WATCH_PID_FILE="$HEARTBEAT_DIR/${role}.watch.pid"
+WATCH_UNIT="dev-studio-watcher@${role}.service"
 
-# Kill any stale watcher from a previous session.
-if [ -f "\$WATCH_PID_FILE" ]; then
-  OLD_PID="\$(cat "\$WATCH_PID_FILE" 2>/dev/null || true)"
-  if [ -n "\$OLD_PID" ] && kill -0 "\$OLD_PID" 2>/dev/null; then
-    kill "\$OLD_PID" 2>/dev/null || true
-  fi
-  rm -f "\$WATCH_PID_FILE"
+# --- watcher mode detection (ADR-0006) ---
+WATCHER_MODE="nohup"
+if systemctl --user is-enabled "\$WATCH_UNIT" >/dev/null 2>&1; then
+  WATCHER_MODE="systemd"
 fi
 
-# Start the watcher in the background. WAKE_PANE auto-enables in --loop.
-nohup bash "$REPO_ROOT/scripts/agent-watch.sh" "${role}" --loop \\
-  > "\$WATCH_LOG" 2>&1 &
-echo \$! > "\$WATCH_PID_FILE"
-WATCH_PID="\$(cat "\$WATCH_PID_FILE")"
+if [ "\$WATCHER_MODE" = "systemd" ]; then
+  # --- systemd mode: watcher is managed externally ---
+  # Ensure unit is running (idempotent); no PID file, no trap.
+  systemctl --user start "\$WATCH_UNIT" 2>/dev/null || true
+  WATCH_PID="\$(systemctl --user show -p MainPID --value "\$WATCH_UNIT" 2>/dev/null)"
+  WATCH_STATUS_LINE="  Watcher: \$WATCH_UNIT (PID \$WATCH_PID) — systemd-managed"
+else
+  # --- nohup fallback mode (pre-D4 behaviour) ---
+  WATCH_PID_FILE="$HEARTBEAT_DIR/${role}.watch.pid"
 
-# Cleanup hook: when this bootstrap exits (claude quits or pane closes),
-# stop the background watcher so we don't leak daemons.
-cleanup_watcher() {
-  if [ -n "\$WATCH_PID" ] && kill -0 "\$WATCH_PID" 2>/dev/null; then
-    kill "\$WATCH_PID" 2>/dev/null || true
+  # Kill any stale watcher from a previous session.
+  if [ -f "\$WATCH_PID_FILE" ]; then
+    OLD_PID="\$(cat "\$WATCH_PID_FILE" 2>/dev/null || true)"
+    if [ -n "\$OLD_PID" ] && kill -0 "\$OLD_PID" 2>/dev/null; then
+      kill "\$OLD_PID" 2>/dev/null || true
+    fi
+    rm -f "\$WATCH_PID_FILE"
   fi
-  rm -f "\$WATCH_PID_FILE"
-}
-trap cleanup_watcher EXIT INT TERM
+
+  # Start the watcher in the background.
+  nohup bash "$REPO_ROOT/scripts/agent-watch.sh" "${role}" --loop \\
+    > "\$WATCH_LOG" 2>&1 &
+  echo \$! > "\$WATCH_PID_FILE"
+  WATCH_PID="\$(cat "\$WATCH_PID_FILE")"
+
+  # Cleanup hook: when this bootstrap exits (claude quits or pane closes),
+  # stop the background watcher so we don't leak daemons.
+  cleanup_watcher() {
+    if [ -n "\$WATCH_PID" ] && kill -0 "\$WATCH_PID" 2>/dev/null; then
+      kill "\$WATCH_PID" 2>/dev/null || true
+    fi
+    rm -f "\$WATCH_PID_FILE"
+  }
+  trap cleanup_watcher EXIT INT TERM
+  WATCH_STATUS_LINE="  Watcher: PID \$WATCH_PID (nohup; install systemd units for resilience)"
+fi
 
 clear
 echo "═══════════════════════════════════════════════════════════"
@@ -97,7 +123,8 @@ echo "  ${role_upper}"
 echo "  Repo: $REPO_ROOT"
 echo "  Soul: .claude/agents/${role}.md"
 echo "  Heartbeat: $HEARTBEAT_DIR/${role}.heartbeat"
-echo "  Watcher: PID \$WATCH_PID (log: \$WATCH_LOG)"
+echo "\$WATCH_STATUS_LINE"
+echo "  Log: \$WATCH_LOG"
 echo "═══════════════════════════════════════════════════════════"
 echo ""
 echo "Claude Code otomatik başlatılıyor (--dangerously-skip-permissions)"

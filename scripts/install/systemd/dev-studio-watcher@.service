@@ -1,0 +1,33 @@
+[Unit]
+Description=Multi-Agent Dev Studio watcher for role %i
+Documentation=https://github.com/atilcan65/atilprojects/blob/main/docs/decisions/ADR-0006-watcher-resilience.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/dev-studio/atilprojects
+# %i = role name (orchestrator, product-manager, architect, developer, tester)
+ExecStart=/usr/bin/bash /opt/dev-studio/atilprojects/scripts/agent-watch.sh %i --loop
+Restart=always
+RestartSec=5
+# Avoid restart storms if agent-watch.sh itself is broken
+StartLimitIntervalSec=60
+StartLimitBurst=10
+# Per-role log file (append; agent-watch.sh has its own structured logging)
+StandardOutput=append:/var/log/dev-studio/%i.watch.log
+StandardError=append:/var/log/dev-studio/%i.watch.log
+# Resource hygiene: a misbehaving watcher should not eat the VM
+MemoryMax=512M
+TasksMax=64
+# Soft kill first, hard kill after 10s
+TimeoutStopSec=10
+KillMode=mixed
+# Environment overrides can be added per role via drop-ins:
+#   ~/.config/systemd/user/dev-studio-watcher@developer.service.d/override.conf
+# e.g. to tighten backfill window for a specific role:
+#   [Service]
+#   Environment="PR_MERGED_BACKFILL=10 minutes ago"
+
+[Install]
+WantedBy=default.target

@@ -8,12 +8,16 @@
 #   agent-doctor.sh                          # check all 5 roles, print health summary
 #   agent-doctor.sh <role>                   # deep-dive one role
 #   agent-doctor.sh <role> --kick <pattern>  # surgical dedup removal (e.g. --kick pr-review-26)
+#   agent-doctor.sh <role> --restart         # restart watcher (ADR-0006: systemd if available)
+#   agent-doctor.sh --units                  # systemd watcher unit status table
 #   agent-doctor.sh --alert                  # cron-friendly: stale roles → Telegram warn, exit code
 #
 # Examples:
 #   ./agent-doctor.sh                        # quick health board
 #   ./agent-doctor.sh tester                 # why tester not waking?
 #   ./agent-doctor.sh tester --kick pr-review-26
+#   ./agent-doctor.sh tester --restart       # cycle a stuck watcher
+#   ./agent-doctor.sh --units                # one-glance unit health
 #   ./agent-doctor.sh --alert                # in cron: */5 * * * *
 #
 # Exit codes:
@@ -31,6 +35,22 @@ LOG_DIR="${AGENT_LOG_DIR:-/var/log/dev-studio}"
 STALE_SEC="${AGENT_HEARTBEAT_STALE_SEC:-300}"
 
 ROLES=(orchestrator product-manager architect developer tester)
+
+# --- systemd helpers (ADR-0006) ---
+unit_for() { echo "dev-studio-watcher@${1}.service"; }
+
+unit_enabled() {
+  systemctl --user is-enabled "$(unit_for "$1")" >/dev/null 2>&1
+}
+unit_active() {
+  systemctl --user is-active "$(unit_for "$1")" >/dev/null 2>&1
+}
+unit_pid() {
+  systemctl --user show -p MainPID --value "$(unit_for "$1")" 2>/dev/null
+}
+unit_restart() {
+  systemctl --user restart "$(unit_for "$1")"
+}
 
 # Colours (graceful on no-TTY)
 if [ -t 1 ]; then
@@ -62,9 +82,20 @@ role_health_line() {
     return 1
   fi
 
-  # PID alive?
-  local pid pid_status=""
-  if [ -f "$pid_file" ]; then
+  # PID alive? Prefer systemd (ADR-0006), fallback to pid file (legacy nohup).
+  local pid pid_status="" src=""
+  if unit_enabled "$role"; then
+    src="sd"
+    pid="$(unit_pid "$role")"
+    if unit_active "$role" && [ -n "$pid" ] && [ "$pid" != "0" ] && kill -0 "$pid" 2>/dev/null; then
+      pid_status="${G}sd pid=${pid}${D}"
+    elif unit_active "$role"; then
+      pid_status="${Y}sd active pid=?${D}"
+    else
+      pid_status="${R}sd INACTIVE${D}"
+    fi
+  elif [ -f "$pid_file" ]; then
+    src="nohup"
     pid="$(cat "$pid_file")"
     if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
       pid_status="${G}pid=${pid}${D}"
@@ -199,9 +230,47 @@ Run on VM:  /opt/dev-studio/atilprojects/scripts/agent-doctor.sh ${stale_roles[0
   exit 1
 }
 
+# --- units mode (ADR-0006): one-glance systemd watcher table ---
+units_mode() {
+  if ! command -v systemctl >/dev/null 2>&1; then
+    echo "systemctl not available"; exit 1
+  fi
+  printf "${B}agent-doctor --units (systemd watcher health)${D}\n\n"
+  if ! systemctl --user --no-pager list-units 'dev-studio-watcher@*.service' 2>/dev/null | grep -q dev-studio-watcher; then
+    echo "  No dev-studio-watcher units found."
+    echo "  Install with:  bash $(cd "$SCRIPT_DIR" && pwd)/install/dev-studio-install-systemd.sh"
+    exit 0
+  fi
+  printf "  %-18s %-9s %-9s %-8s %s\n" ROLE ENABLED ACTIVE PID UPTIME
+  for role in "${ROLES[@]}"; do
+    local u en act pid since
+    u="$(unit_for "$role")"
+    en="$(systemctl --user is-enabled "$u" 2>/dev/null || echo "-")"
+    act="$(systemctl --user is-active  "$u" 2>/dev/null || echo "-")"
+    pid="$(unit_pid "$role")"
+    [ -z "$pid" ] && pid="-"
+    since="$(systemctl --user show -p ActiveEnterTimestamp --value "$u" 2>/dev/null || echo "-")"
+    printf "  %-18s %-9s %-9s %-8s %s\n" "$role" "$en" "$act" "$pid" "$since"
+  done
+  echo ""
+  if systemctl --user --no-pager is-active dev-studio-watcher-reload.path >/dev/null 2>&1; then
+    printf "  reload-path:       ${G}active${D} (auto-restart on agent-watch.sh change)\n"
+  else
+    printf "  reload-path:       ${Y}inactive${D} — watcher won't auto-reload on git pull\n"
+  fi
+  echo ""
+  echo "  Tip: ./agent-doctor.sh <role> --restart    — cycle one watcher"
+  echo "       journalctl --user -u dev-studio-watcher@<role>  — systemd logs"
+}
+
 # --- main dispatch ---
 if [ "${1:-}" = "--alert" ]; then
   alert_mode
+fi
+
+if [ "${1:-}" = "--units" ]; then
+  units_mode
+  exit 0
 fi
 
 if [ $# -eq 0 ]; then
@@ -236,6 +305,32 @@ if [ "${1:-}" = "--kick" ]; then
   echo "Next poll (~60s) should re-emit events for matching PRs."
   echo "Watch:  tail -f ${LOG_DIR}/${ROLE}.watch.log"
   exit 0
+fi
+
+# --- restart subcommand (ADR-0006) ---
+if [ "${1:-}" = "--restart" ]; then
+  if unit_enabled "$ROLE"; then
+    echo "Restarting $(unit_for "$ROLE") via systemd…"
+    unit_restart "$ROLE"
+    sleep 2
+    if unit_active "$ROLE"; then
+      printf "  status: ${G}active${D}, MainPID=%s\n" "$(unit_pid "$ROLE")"
+      exit 0
+    else
+      printf "  status: ${R}failed${D} (check: journalctl --user -u $(unit_for "$ROLE") | tail -20)\n"
+      exit 1
+    fi
+  else
+    echo "systemd unit not enabled for $ROLE; falling back to nohup restart."
+    echo "Consider running:  bash ${SCRIPT_DIR}/install/dev-studio-install-systemd.sh"
+    pkill -f "agent-watch.sh ${ROLE}" || true
+    sleep 1
+    nohup bash "${SCRIPT_DIR}/agent-watch.sh" "${ROLE}" --loop \
+      >> "${LOG_DIR}/${ROLE}.watch.log" 2>&1 &
+    NEW_PID=$!
+    echo "  nohup restart: PID=${NEW_PID}"
+    exit 0
+  fi
 fi
 
 role_deep_dive "$ROLE"
