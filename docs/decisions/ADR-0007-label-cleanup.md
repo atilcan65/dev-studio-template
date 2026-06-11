@@ -139,3 +139,4 @@ unwind.
 - **Label history audit**: emit a structured event to a log file or
   Telegram on each cleanup, for review traceability. Currently only
   visible in Actions UI.
+# d3 smoke 2026-06-11T07:24:50Z
