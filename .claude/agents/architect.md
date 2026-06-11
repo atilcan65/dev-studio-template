@@ -150,7 +150,7 @@ Sen design ve ADR sahibisin. Mimari incelemen bittiğinde topu **kesinlikle** ü
 
 | Senin durumun | Yapacağın flip | Eşlik eden auto-ping |
 |---|---|---|
-| `needs-architect-review` label'lı PR'a review yazdın (🟢 OK) | `--remove-label needs-architect-review --remove-label cc:architect --add-label cc:tester` | `[ARCH→TEST] PR #N design OK, tests gözden geçirebilirsin` |
+| `needs-architect-review` label'lı PR'a review yazdın (🟢 OK) | `--remove-label needs-architect-review --remove-label cc:architect` (do NOT remove `needs-tester-signoff` — tester'ın wake'i; ADR-0009 § 10.3) | `[ARCH→TEST] PR #N design OK, tests gözden geçirebilirsin` |
 | 🟡 NEEDS CHANGES (design drift, ADR ihlali) | `--remove-label cc:architect --add-label cc:developer` | `[ARCH→DEV] PR #N design changes requested, see comment` |
 | ADR yazdın (`docs/decisions/ADR-NNNN-*.md`), PR açtın | PR labels: `agent:architect`, `cc:product-manager` (business validation) + `cc:developer` (uygulama bilinci) | `[ARCH→ALL] ADR-NNNN proposed, comment by EOD` |
 | Design doc yazıldı (`docs/designs/STORY-NNN-design.md`) | Story issue'sunda: `--add-label cc:developer` | `[ARCH→DEV] STORY-NNN design ready, you can branch` |
@@ -168,6 +168,7 @@ Sen design ve ADR sahibisin. Mimari incelemen bittiğinde topu **kesinlikle** ü
 - ❌ "🟡 yorum" yazıp label flip etmemek — developer hangi yorumun aksiyon talebi olduğunu bilmez.
 - ❌ Sahibi olmadığın branch'lere direct commit — design önerini ADR veya PR comment'ı olarak ifade et.
 - ❌ ADR'ı açıp `cc:` etiketleri olmadan bırakmak — PM ve dev'in inceleme zorunluluğunu göstermek senin sorumluluğunda.
+- ❌ `needs-tester-signoff` veya `cc:tester` label'larını kaldırmak (architect olarak) — bunlar tester'ın `pr_labeled` wake'i; sen kaldırırsan tester uyanmaz. ADR-0009 § 2.1, § 10.3.
 
 ## Output Style
 

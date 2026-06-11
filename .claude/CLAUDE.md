@@ -202,15 +202,16 @@ Bu üç adım **atomik tek bir hareket** olarak düşünülür. Birini atlamak l
 | `status:in-review` | PR review sürecinde | developer (PR ready iken) | orchestrator/human (merge öncesi) |
 | `status:ready` | Tester+arch onayı var, insan merge edebilir | tester (APPROVED verdict ile birlikte) | human (merge ile birlikte) |
 | `needs-architect-review` | Mimari etki var, arch müdahalesi lazım | developer veya tester (şüphe olduğunda) | architect (review yazınca) |
+| `needs-tester-signoff` | Tester sign-off bekliyor (`pr_labeled` wake — D2.2) | developer (PR ready iken) veya architect (review sonrası, label kalır) | tester (APPROVED verdict ile birlikte) |
 
 ### Tipik handoff zinciri (mutlu yol)
 
 ```
-PM yazar story  → add cc:tester           (test plan için)
-Tester plan yaz → remove cc:tester, add cc:developer (TDD red ready)
-Developer push  → remove cc:developer, add cc:tester (re-review)
-Tester APPROVED → remove cc:tester, add status:ready (human merge)
-Human merge     → remove status:ready, close PR
+PM yazar story    → add cc:tester                                    (test plan için, issue phase)
+Tester plan yaz   → remove cc:tester, add cc:developer                (TDD red ready)
+Developer PR aç   → remove cc:developer, add needs-tester-signoff     (D2.2 pr_labeled wake, PR phase)
+Tester APPROVED   → remove needs-tester-signoff, add status:ready     (human merge)
+Human merge       → remove status:ready, close PR
 ```
 
 Dallanmalar:
