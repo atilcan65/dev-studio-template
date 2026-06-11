@@ -102,7 +102,9 @@ mark is also self-documenting and follows the pattern we'd reuse for any future
 "poll a remote feed since timestamp X" event source.
 
 **Initialization:** on first read, if the field is missing or `null`, it is back-filled
-to `now() - 5min` so a fresh state file doesn't replay every historical merge.
+to `now() - PR_MERGED_BACKFILL` so a fresh state file doesn't replay every historical
+merge. `PR_MERGED_BACKFILL` is an env-overridable GNU-date expression; default `1 hour
+ago` (see "Backfill window sizing" below for rationale).
 
 **Three layers of dedup defense:**
 
@@ -144,11 +146,38 @@ with a four-line patch — but it is **not** added now to keep the MVP minimal.
 ### Risks accepted
 
 - A PR merged within the first poll after `pr_merged_last_seen_utc` is backfilled
-  to `now-5min` could fire late (once the poll catches up). Acceptable: each role
-  bootstraps a clean window on first start.
+  could fire late (once the poll catches up). Acceptable: each role bootstraps a
+  clean window on first start.
 - If two roles process the same merge at slightly different times, the global view
   is briefly inconsistent. The state files are per-role on purpose; consistency
   is eventual and bounded by `poll_interval_sec`.
+
+### Backfill window sizing (added 2026-06-11 after D2 smoke test)
+
+The initial D2 implementation used a 5-minute backfill window. Live smoke test
+revealed an edge case: PR #35 merged at `06:19:54Z`, but operator paste latency
+plus the manual watcher-reload ritual placed the new watcher start at `06:25:36Z`
+— a 5 min 42 s gap. The 5-minute window placed `pr_merged_last_seen_utc` at
+`06:20:36Z`, which is **after** the merge timestamp, so `gh pr list --search
+"merged:>06:20:36Z"` returned empty for orchestrator and product-manager. Only
+`developer`, whose state file already carried a stale-but-earlier timestamp from
+a prior probe, captured the event.
+
+Widening the default to **1 hour** absorbs all realistic restart-induced gaps
+(operator latency, transient outages, gh-CLI retries) without ever replaying
+more than an hour of merge history. The three-layer dedup defense
+(`pr_merged_last_seen_utc` + `processed_event_ids` ring + SHA-keyed event ID)
+makes any overlap idempotent, so the window can be widened freely. Tests and
+short-lived sandboxes can override via `PR_MERGED_BACKFILL="10 minutes ago"` to
+keep replay scope tight; D4 (watcher resilience / auto-restart on script change)
+will remove the operator-paste latency entirely — at which point the default
+could tighten back to ~10 minutes, but 1 hour stays template-grade for any
+manually-operated deployment.
+
+**State after this fix:** smoke test on a fresh state file (`pr_merged_last_seen_utc`
+deleted) immediately captures PRs merged up to one hour earlier. Both PR #34
+and PR #35 are recoverable from the current state and will fan out on the next
+poll after watcher reload.
 
 ## Verification
 

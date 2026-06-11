@@ -115,13 +115,29 @@ POLL_INTERVAL="${POLL_INTERVAL:-60}"
 
 # v3: pr_merged_last_seen_utc — separate high-water mark for merged-PR polling.
 # Decoupled from last_seen_utc (which is event-mark-driven) to avoid race when
-# poll interval and merge interval overlap. Backfilled to (now - 5min) on first
+# poll interval and merge interval overlap. Backfilled to (now - WINDOW) on first
 # read so we don't spam-replay every historical merge on a fresh state file.
+#
+# Backfill window is configurable via PR_MERGED_BACKFILL env var (GNU date expr).
+# Default = '1 hour ago': long enough that a watcher restart taking even tens of
+# minutes (e.g. operator paste latency, brief outage) won't drop a freshly-merged
+# PR, while still bounded so a multi-day-old state file doesn't replay history.
+# Re-merge of the same PR is harmless: event ID embeds the merge SHA and the
+# processed_event_ids ring buffer dedupes anything already delivered.
+PR_MERGED_BACKFILL="${PR_MERGED_BACKFILL:-1 hour ago}"
 PR_MERGED_LAST_SEEN="$("$STATE_HELPER" get "$ROLE" pr_merged_last_seen_utc)"
 if [ -z "$PR_MERGED_LAST_SEEN" ] || [ "$PR_MERGED_LAST_SEEN" = "null" ]; then
-  PR_MERGED_LAST_SEEN="$(date -u -d '5 minutes ago' '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null \
-    || date -u -v-5M '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null \
-    || date -u '+%Y-%m-%dT%H:%M:%SZ')"
+  # GNU date (Linux) understands "-d '1 hour ago'"; BSD date (macOS) needs -v.
+  # For BSD fallback we parse a leading integer + unit out of PR_MERGED_BACKFILL.
+  PR_MERGED_LAST_SEEN="$(date -u -d "$PR_MERGED_BACKFILL" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null)"
+  if [ -z "$PR_MERGED_LAST_SEEN" ]; then
+    # BSD fallback: extract "<N> <unit>" → -v-<N><U>; default to -1H if unparsable.
+    bsd_num="$(printf '%s' "$PR_MERGED_BACKFILL" | awk '{print $1}')"
+    bsd_unit="$(printf '%s' "$PR_MERGED_BACKFILL" | awk '{print $2}' | cut -c1 | tr '[:lower:]' '[:upper:]')"
+    case "$bsd_unit" in M|H|D|W) : ;; *) bsd_num=1; bsd_unit=H ;; esac
+    PR_MERGED_LAST_SEEN="$(date -u -v-"${bsd_num}${bsd_unit}" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null \
+      || date -u '+%Y-%m-%dT%H:%M:%SZ')"
+  fi
   "$STATE_HELPER" set "$ROLE" pr_merged_last_seen_utc "$PR_MERGED_LAST_SEEN"
 fi
 
