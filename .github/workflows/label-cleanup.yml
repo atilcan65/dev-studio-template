@@ -1,0 +1,108 @@
+name: Label Cleanup
+
+# Auto-removes transient labels (cc:*, agent:*, needs-*, agent-stall) when a PR
+# is merged or closed, and advances status labels to status:done on merge.
+# Metadata labels (type:*, priority:*, sprint:*, security, good-first-issue,
+# status:done) are preserved. See docs/decisions/ADR-0007.
+
+on:
+  pull_request:
+    types: [closed]
+  issues:
+    types: [closed]
+
+permissions:
+  pull-requests: write
+  issues: write
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    # Only run for merged PRs OR closed issues. Closed-not-merged PRs leave
+    # labels intact so an operator can see why the PR was abandoned.
+    if: |
+      (github.event_name == 'pull_request' && github.event.pull_request.merged == true) ||
+      (github.event_name == 'issues' && github.event.issue.state == 'closed')
+    steps:
+      - name: Determine target number and labels
+        id: target
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+        run: |
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            echo "number=$PR_NUMBER" >> "$GITHUB_OUTPUT"
+            echo "kind=PR" >> "$GITHUB_OUTPUT"
+            echo "merged=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "number=$ISSUE_NUMBER" >> "$GITHUB_OUTPUT"
+            echo "kind=ISSUE" >> "$GITHUB_OUTPUT"
+            echo "merged=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Cleanup transient labels
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          NUMBER: ${{ steps.target.outputs.number }}
+          KIND: ${{ steps.target.outputs.kind }}
+          MERGED: ${{ steps.target.outputs.merged }}
+        run: |
+          set -euo pipefail
+
+          echo "::group::Current labels"
+          CURRENT=$(gh api "repos/$REPO/issues/$NUMBER/labels" --jq '[.[].name]')
+          echo "$CURRENT" | jq -r '.[]' || true
+          echo "::endgroup::"
+
+          # Patterns considered "transient" and removed on close/merge.
+          # Anchored regex: matches exact label names.
+          TRANSIENT_REGEX='^(cc:|agent:|needs-)|^agent-stall$'
+
+          # Status labels that should advance to status:done on PR merge.
+          STATUS_ADVANCE_REGEX='^status:(in-progress|in-review|ready|blocked|backlog)$'
+
+          TO_REMOVE=$(echo "$CURRENT" | jq -r --arg re "$TRANSIENT_REGEX" '
+            [.[] | select(test($re))] | .[]')
+
+          STATUS_TO_REPLACE=$(echo "$CURRENT" | jq -r --arg re "$STATUS_ADVANCE_REGEX" '
+            [.[] | select(test($re))] | .[]')
+
+          removed_count=0
+          for lbl in $TO_REMOVE; do
+            echo "removing: $lbl"
+            # URL-encode the label name (handles ':' and spaces)
+            enc=$(jq -rn --arg v "$lbl" '$v | @uri')
+            if gh api -X DELETE "repos/$REPO/issues/$NUMBER/labels/$enc" >/dev/null 2>&1; then
+              removed_count=$((removed_count+1))
+            else
+              echo "::warning::failed to remove label '$lbl' (may already be gone)"
+            fi
+          done
+
+          # Only advance status on merged PRs, not closed issues
+          status_advanced=0
+          if [ "$KIND" = "PR" ] && [ "$MERGED" = "true" ]; then
+            for lbl in $STATUS_TO_REPLACE; do
+              echo "advancing status: $lbl -> status:done"
+              enc=$(jq -rn --arg v "$lbl" '$v | @uri')
+              gh api -X DELETE "repos/$REPO/issues/$NUMBER/labels/$enc" >/dev/null 2>&1 || true
+              status_advanced=$((status_advanced+1))
+            done
+            if [ "$status_advanced" -gt 0 ]; then
+              gh api -X POST "repos/$REPO/issues/$NUMBER/labels" \
+                -f "labels[]=status:done" >/dev/null 2>&1 || \
+                echo "::warning::failed to add status:done"
+            fi
+          fi
+
+          echo "::group::Summary"
+          echo "kind=$KIND number=$NUMBER merged=$MERGED"
+          echo "removed_transient=$removed_count"
+          echo "status_advanced=$status_advanced"
+          echo "::endgroup::"
+
+          echo "::group::Final labels"
+          gh api "repos/$REPO/issues/$NUMBER/labels" --jq '.[].name' || true
+          echo "::endgroup::"
