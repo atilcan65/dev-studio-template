@@ -203,8 +203,13 @@ fi
 #      Kullanıcıya `{{REPO_ROOT}}`, `{{GITHUB_OWNER}}` gibi placeholder'ları
 #      EXAMPLE olarak gösterir. Bu dosya hiç render edilmez (.tmpl uzantısı yok).
 #
-#   4) docs/TROUBLESHOOTING.md : Sorun giderme dokümanı. "Placeholder render
-#      edilmemiş" senaryosunu örneklerle anlatırken {{REPO_ROOT}} literal'i kullanır.
+#   4) docs/ klasörü : Tüm kullanıcı dokümanları (TROUBLESHOOTING, TELEGRAM-SETUP,
+#      OPERATIONS, vs.). Bu dosyalar template'in nasıl çalıştığını anlatır ve
+#      eğitim amacıyla {{HUMAN_OWNER_NAME}}, {{REPO_ROOT}} gibi placeholder
+#      literal'lerini taşır. .tmpl uzantısı yok, init script dokunmaz.
+#      Glob-level exclude: yeni doc eklendiğinde fix gerektirmez (template-grade).
+#      Render edilmemiş docs/*.md.tmpl kalsaydı T2 ".tmpl cleanup" check'i
+#      onu zaten yakalar — güvenli.
 #
 # Ayrıca GitHub Actions workflow'ları `${{ github.xxx }}` syntax'ı kullanır;
 # bu bizim placeholder şablonumuz DEĞİL, Actions'ın native expression syntax'ıdır.
@@ -215,7 +220,7 @@ PLACEHOLDER_GREP() {
         | grep -v "/scripts/tests/" \
         | grep -v "scripts/dev-studio-init.sh" \
         | grep -v "TEMPLATE-README.md" \
-        | grep -v "docs/TROUBLESHOOTING.md"
+        | grep -v "^\./docs/"
 }
 REMAINING_PLACEHOLDERS=$(PLACEHOLDER_GREP | wc -l)
 if [[ $REMAINING_PLACEHOLDERS -eq 0 ]]; then
