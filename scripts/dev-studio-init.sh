@@ -146,7 +146,13 @@ render_one() {
     chmod +x "$dst"
   fi
 
-  dbg "rendered: $src -> $dst"
+  # Remove the .tmpl source after successful render. Template-grade contract:
+  # rendered repos should contain ONLY final files — leftover .tmpl files are
+  # confusing for downstream consumers and break post-init smoke tests that
+  # assert "no .tmpl present". DRY_RUN skips this (we already returned above).
+  rm -f "$src"
+
+  dbg "rendered: $src -> $dst (source removed)"
 }
 
 # --- Render all .tmpl files in the repo -----------------------------------

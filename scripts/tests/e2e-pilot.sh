@@ -187,12 +187,16 @@ else
 fi
 
 # Placeholder kaldı mı kontrol
-# NOT: scripts/tests/ klasörü test fixtures içerir — kasten {{NEVER_RESOLVED}} gibi
+# NOT 1: scripts/tests/ klasörü test fixtures içerir — kasten {{NEVER_RESOLVED}} gibi
 # placeholder'lar bulundurur (faz5-smoke.sh init'in unresolved placeholder'ı yakaladığını test ediyor).
-# Bu yüzden tests/ klasörünü exclude ediyoruz.
+# NOT 2: scripts/dev-studio-init.sh kendi içinde {{GITHUB_OWNER}} / {{GITHUB_REPO}}
+# literal'lerini hata mesajı şablonu olarak tutar (kullanıcı bu değişkenleri set etmeden
+# çalıştırırsa hangi placeholder eksik gösterilsin diye). Bunlar self-reference,
+# unresolved placeholder DEĞİL — exclude ediyoruz.
 REMAINING_PLACEHOLDERS=$(grep -r "{{" --include="*.md" --include="*.sh" --include="*.yml" --include="*.yaml" . 2>/dev/null \
     | grep -v "/.git/" \
     | grep -v "/scripts/tests/" \
+    | grep -v "scripts/dev-studio-init.sh" \
     | wc -l)
 if [[ $REMAINING_PLACEHOLDERS -eq 0 ]]; then
     pass "All placeholders resolved (excluding test fixtures)"
@@ -201,6 +205,7 @@ else
     grep -r "{{" --include="*.md" --include="*.sh" --include="*.yml" --include="*.yaml" . 2>/dev/null \
         | grep -v "/.git/" \
         | grep -v "/scripts/tests/" \
+        | grep -v "scripts/dev-studio-init.sh" \
         | head -3
 fi
 

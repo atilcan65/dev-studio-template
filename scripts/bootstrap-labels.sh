@@ -62,10 +62,7 @@ LABELS=(
   # Meta
   "good-first-issue|7057ff|Good for newcomers"
   "agent-stall|d93f0b|Agent stuck — needs intervention"
-  "needs-human|d93f0b|Requires human decision"
   "security|ee0701|Security-sensitive — handle with care"
-  "needs-architect-review|c2e0c6|Awaiting architect alignment review"
-  "needs-tester-signoff|c2e0c6|Awaiting tester sign-off"
 )
 
 CREATED=0
