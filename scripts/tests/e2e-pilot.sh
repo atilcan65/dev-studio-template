@@ -187,26 +187,42 @@ else
 fi
 
 # Placeholder kaldı mı kontrol
-# NOT 1: scripts/tests/ klasörü test fixtures içerir — kasten {{NEVER_RESOLVED}} gibi
-# placeholder'lar bulundurur (faz5-smoke.sh init'in unresolved placeholder'ı yakaladığını test ediyor).
-# NOT 2: scripts/dev-studio-init.sh kendi içinde {{GITHUB_OWNER}} / {{GITHUB_REPO}}
-# literal'lerini hata mesajı şablonu olarak tutar (kullanıcı bu değişkenleri set etmeden
-# çalıştırırsa hangi placeholder eksik gösterilsin diye). Bunlar self-reference,
-# unresolved placeholder DEĞİL — exclude ediyoruz.
-REMAINING_PLACEHOLDERS=$(grep -r "{{" --include="*.md" --include="*.sh" --include="*.yml" --include="*.yaml" . 2>/dev/null \
-    | grep -v "/.git/" \
-    | grep -v "/scripts/tests/" \
-    | grep -v "scripts/dev-studio-init.sh" \
-    | wc -l)
-if [[ $REMAINING_PLACEHOLDERS -eq 0 ]]; then
-    pass "All placeholders resolved (excluding test fixtures)"
-else
-    fail "$REMAINING_PLACEHOLDERS placeholders remain unresolved"
-    grep -r "{{" --include="*.md" --include="*.sh" --include="*.yml" --include="*.yaml" . 2>/dev/null \
+#
+# Bu test, init script'in tüm `{{PLACEHOLDER}}` literal'lerini gerçek değerlerle
+# değiştirdiğini doğrular. Ancak bazı dosyalar KASITLI olarak `{{...}}` literal'i
+# içerir ve bunların render edilmemesi GEREKLI — onları exclude ediyoruz:
+#
+#   1) scripts/tests/  : Test fixtures (faz5-smoke.sh init'in unresolved
+#      placeholder'ı yakaladığını test etmek için {{NEVER_RESOLVED}} taşır).
+#
+#   2) scripts/dev-studio-init.sh : Init script'in kendi hata mesajlarında
+#      {{GITHUB_OWNER}} / {{GITHUB_REPO}} literal'lerini gösterir (kullanıcıya
+#      hangi placeholder çözülmediğini anlatmak için).
+#
+#   3) TEMPLATE-README.md : Template'in nasıl kullanılacağını anlatan döküman.
+#      Kullanıcıya `{{REPO_ROOT}}`, `{{GITHUB_OWNER}}` gibi placeholder'ları
+#      EXAMPLE olarak gösterir. Bu dosya hiç render edilmez (.tmpl uzantısı yok).
+#
+#   4) docs/TROUBLESHOOTING.md : Sorun giderme dokümanı. "Placeholder render
+#      edilmemiş" senaryosunu örneklerle anlatırken {{REPO_ROOT}} literal'i kullanır.
+#
+# Ayrıca GitHub Actions workflow'ları `${{ github.xxx }}` syntax'ı kullanır;
+# bu bizim placeholder şablonumuz DEĞİL, Actions'ın native expression syntax'ıdır.
+# `$` prefixli `{{` ifadelerini exclude ediyoruz.
+PLACEHOLDER_GREP() {
+    grep -rE '(^|[^$])\{\{' --include="*.md" --include="*.sh" --include="*.yml" --include="*.yaml" . 2>/dev/null \
         | grep -v "/.git/" \
         | grep -v "/scripts/tests/" \
         | grep -v "scripts/dev-studio-init.sh" \
-        | head -3
+        | grep -v "TEMPLATE-README.md" \
+        | grep -v "docs/TROUBLESHOOTING.md"
+}
+REMAINING_PLACEHOLDERS=$(PLACEHOLDER_GREP | wc -l)
+if [[ $REMAINING_PLACEHOLDERS -eq 0 ]]; then
+    pass "All placeholders resolved (excluding intentional literals)"
+else
+    fail "$REMAINING_PLACEHOLDERS placeholders remain unresolved"
+    PLACEHOLDER_GREP | head -3
 fi
 
 # .tmpl uzantıları temizlenmiş mi
@@ -218,14 +234,17 @@ else
 fi
 
 # CLAUDE.md render edilmiş mi (kritik dosya)
-if [[ -f "CLAUDE.md" ]]; then
-    if grep -q "$PILOT_REPO_NAME" CLAUDE.md; then
-        pass "CLAUDE.md contains correct repo name"
+# NOT: CLAUDE.md gerçek konum `.claude/CLAUDE.md` — template'de `.claude/CLAUDE.md.tmpl`
+# olarak gelir ve init script'i orada render eder. Kök dizinde DEĞİL.
+CLAUDE_MD_PATH=".claude/CLAUDE.md"
+if [[ -f "$CLAUDE_MD_PATH" ]]; then
+    if grep -q "$PILOT_REPO_NAME" "$CLAUDE_MD_PATH"; then
+        pass "$CLAUDE_MD_PATH contains correct repo name"
     else
-        fail "CLAUDE.md doesn't contain repo name"
+        fail "$CLAUDE_MD_PATH doesn't contain repo name"
     fi
 else
-    fail "CLAUDE.md not found after init"
+    fail "$CLAUDE_MD_PATH not found after init"
 fi
 
 # README.md render edilmiş mi
