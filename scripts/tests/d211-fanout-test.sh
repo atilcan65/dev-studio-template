@@ -1,6 +1,13 @@
 #!/bin/bash
-# Standalone unit test for D2.1.1 fanout helpers.
+# Standalone unit test for D2.1.1 / D2.2 fanout helpers.
 # Sources agent-watch.sh's helper section by extracting it.
+#
+# Layered test contract (issue #58 Part B+C):
+#   d211 (THIS FILE) = UNIT          - per-helper input/output, isolated.
+#   d212             = INTEGRATION   - full PR lifecycle (T1->T5), cross-role
+#                                      wake matrix, atomic-handoff regression
+#                                      guard. See scripts/tests/d212-handoff-smoke.sh.
+# Run BOTH locally before any agent-watch.sh refactor.
 set -euo pipefail
 
 SCRIPT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/agent-watch.sh"
