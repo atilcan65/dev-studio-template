@@ -1,0 +1,61 @@
+name: Feature Request
+description: Yeni bir özellik veya kullanıcı ihtiyacı — PM önceliği belirleyip Architect'e geçirir
+title: "[Feature] "
+labels: ["agent:pm", "type:feature", "status:backlog"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## Feature Request
+        Yeni özellik veya kullanıcı story'si için. PM bunu okuyup önceliği belirler, Architect'e devreder.
+        **User story format tavsiye edilir** ama zorunlu değil — boş alanları PM dolduracak.
+
+  - type: textarea
+    id: user_story
+    attributes:
+      label: User Story
+      description: "As a [user], I want [feature] so that [benefit]" formatında yaz. Format şart değil ama net olsun.
+      placeholder: "As a developer, I want auto-deployment so that I can release without manual SSH"
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance Criteria
+      description: Bu feature ne zaman "Done" sayılacak?
+      placeholder: |
+        - [ ] Criterion 1 (test edilebilir bir koşul)
+        - [ ] Criterion 2
+        - [ ] Criterion 3
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Context / Background
+      description: Bu neden lazım? İlgili PR'lar, önceki konuşmalar?
+      placeholder: |
+        - Şu an manuel SSH ile deploy ediyoruz, 5 dakika sürüyor
+        - Issue #42'de bahsedilmişti
+
+  - type: dropdown
+    id: priority_hint
+    attributes:
+      label: Priority Hint (optional)
+      description: Sen önemli buluyor musun? PM son kararı verecek.
+      options:
+        - "(PM karar versin)"
+        - P0 — Critical (blocker)
+        - P1 — High (önemli ama bekleyebilir)
+        - P2 — Medium (nice to have)
+        - P3 — Low (cosmetic)
+      default: 0
+
+  - type: textarea
+    id: notes
+    attributes:
+      label: Additional Notes
+      description: Teknik bağlam, kısıtlamalar, alternatifler
+      placeholder: "Teknoloji önerisi, edge case'ler, dependency'ler..."

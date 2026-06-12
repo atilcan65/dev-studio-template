@@ -1,0 +1,100 @@
+name: Vision Intake
+description: Yeni projenin vizyonu — PM bunu alıp epic'lere kıracak (proje başında bir kez)
+title: "[Vision] "
+labels: ["agent:pm", "type:vision", "status:backlog"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## Vision Intake
+        Bu form proje başlangıcında **bir kez** doldurulur. PM bunu okuyup Architect'e devreder, sonra epic'lere böler.
+        Detaylı olman gerekmiyor — PM eksikleri sana soracak. Ama net olmaya çalış.
+
+  - type: textarea
+    id: vision_statement
+    attributes:
+      label: Vision Statement
+      description: Bu proje 1 cümlede ne yapacak?
+      placeholder: "Küçük takımların AI ajanlarıyla yazılım geliştirme sürecini otomatize eden bir framework"
+    validations:
+      required: true
+
+  - type: textarea
+    id: target_users
+    attributes:
+      label: Target Users
+      description: Bunu kim kullanacak?
+      placeholder: |
+        - Solo developer / küçük takım lideri
+        - AI ajanlarla deney yapmak isteyen tech lead
+    validations:
+      required: true
+
+  - type: textarea
+    id: core_problem
+    attributes:
+      label: Core Problem
+      description: Hangi sorunu çözüyor? Bugün insanlar nasıl idare ediyor?
+      placeholder: "Manuel handoff'lar, tutarsız agent davranışı, eksik state yönetimi..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: success_metrics
+    attributes:
+      label: Success Metrics
+      description: Bu proje başarılı olursa neyi ölçeceksin?
+      placeholder: |
+        - 5 ajan otomatik handoff (orchestrator müdahalesiz)
+        - Sprint başına insan etkileşim sayısı < 3
+        - Pilot proje E2E süresi < 1 hafta
+    validations:
+      required: true
+
+  - type: textarea
+    id: key_features
+    attributes:
+      label: Key Features (top 3-5)
+      description: İlk versiyonda olması ŞART olan özellikler
+      placeholder: |
+        1. Multi-agent handoff (GitHub label-driven)
+        2. State machine (orchestrator)
+        3. Telegram notification
+        4. PR-based review flow
+        5. Bootstrap script (yeni proje 1 komutla)
+    validations:
+      required: true
+
+  - type: textarea
+    id: constraints
+    attributes:
+      label: Constraints / Non-goals
+      description: Açıkça YAPMAYACAĞIN şeyler veya teknik kısıtlar
+      placeholder: |
+        - Web UI yok (CLI + GitHub UI yeterli)
+        - Multi-tenancy yok (her proje = tek kişi/takım)
+        - Sadece public GitHub repo desteği (initial)
+
+  - type: textarea
+    id: tech_preferences
+    attributes:
+      label: Tech Stack Preferences
+      description: Tercih ettiğin diller, framework'ler, servisler (varsa)
+      placeholder: |
+        - Bash + Python
+        - GitHub API + gh CLI
+        - Telegram Bot API
+
+  - type: input
+    id: target_date
+    attributes:
+      label: Timeline / Target Date
+      description: Ne zaman bitsin? (kabaca)
+      placeholder: "2026 Q3 sonu — pilot proje canlı"
+
+  - type: textarea
+    id: notes
+    attributes:
+      label: Additional Notes
+      description: PM'in bilmesi gereken başka her şey
+      placeholder: "İlham aldığım projeler, referans linkleri, açık sorular..."
