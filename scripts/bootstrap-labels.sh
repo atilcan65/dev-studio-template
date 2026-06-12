@@ -28,6 +28,7 @@ LABELS=(
   "priority:P2|0e8a16|Medium — fix next sprint"
   "priority:P3|c5def5|Low — nice to have"
   # Type
+  "type:vision|fbca04|Initial product vision intake (one-shot per project)"
   "type:feature|a2eeef|New feature or capability"
   "type:bug|d73a4a|Bug or defect"
   "type:chore|cccccc|Maintenance, refactor, deps"
@@ -47,12 +48,17 @@ LABELS=(
   "agent:architect|5319e7|Assigned to Architect agent"
   "agent:developer|5319e7|Assigned to Developer agent"
   "agent:tester|5319e7|Assigned to Tester agent"
+  "agent:human|ededed|Human owner intervention required"
   # CC (review fanout) — per ADR-0002
   "cc:orchestrator|bfdadc|Review/awareness from Orchestrator"
   "cc:pm|bfdadc|Review/awareness from Product Manager"
   "cc:architect|bfdadc|Review/awareness from Architect"
   "cc:developer|bfdadc|Review/awareness from Developer"
   "cc:tester|bfdadc|Review/awareness from Tester"
+  # Sprint (iteration grouping)
+  "sprint:current|0E8A16|Active sprint"
+  "sprint:next|C2E0C6|Next sprint"
+  "sprint:backlog|EEEEEE|Future sprint"
   # Meta
   "good-first-issue|7057ff|Good for newcomers"
   "agent-stall|d93f0b|Agent stuck — needs intervention"
