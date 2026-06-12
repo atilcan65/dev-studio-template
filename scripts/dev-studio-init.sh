@@ -31,6 +31,12 @@ REPO_ROOT="${DEV_STUDIO_REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && p
 DRY_RUN=0
 VERBOSE=0
 
+# Paths of rendered output files (populated by render_all, consumed by verify).
+# Using a global array so verify scans ONLY what init produced — not user files
+# elsewhere in the repo that may contain literal {{...}} for unrelated reasons
+# (e.g. test fixtures, Jinja docs, this script's own sed lines).
+RENDERED_PATHS=()
+
 for arg in "$@"; do
   case "$arg" in
     --dry-run) DRY_RUN=1 ;;
@@ -156,6 +162,8 @@ render_all() {
     local dst="${tmpl%.tmpl}"
     if render_one "$tmpl" "$dst"; then
       count=$((count + 1))
+      # Track dst for verify() — only files we actually produced get scanned.
+      RENDERED_PATHS+=("$dst")
     else
       failed=$((failed + 1))
     fi
@@ -182,39 +190,31 @@ verify() {
 
   log "verifying rendered outputs"
 
-  # Self-exclusion: skip this script itself (it documents placeholder names
-  # in its sed commands and comments) and the docs/decisions/ folder which
-  # contains decision records mentioning placeholders for historical context.
-  local self_path
-  self_path="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
+  # Scope: scan ONLY files we just rendered. This avoids false positives from
+  # user-authored files (test fixtures, scripts, docs/decisions/, third-party
+  # packages) that may legitimately contain {{...}} strings unrelated to our
+  # placeholder set. The contract is: a render is successful iff every dst
+  # produced by render_all has no remaining {{UPPER_SNAKE}} markers.
+  if [ "${#RENDERED_PATHS[@]}" -eq 0 ]; then
+    ok "no rendered outputs to verify (0 .tmpl files found)"
+    return 0
+  fi
 
-  # Exclude common environment directories (.venv, node_modules, etc.) —
-  # third-party packages may contain {{...}} patterns in their own source
-  # (Python type stubs, Jinja docs, etc.) which are NOT our placeholders.
   local stragglers
-  stragglers=$(find "$REPO_ROOT" \
-                 -path "$REPO_ROOT/.git" -prune -o \
-                 -path "$REPO_ROOT/node_modules" -prune -o \
-                 -path "$REPO_ROOT/.venv" -prune -o \
-                 -path "$REPO_ROOT/venv" -prune -o \
-                 -path "$REPO_ROOT/.tox" -prune -o \
-                 -path "$REPO_ROOT/.pytest_cache" -prune -o \
-                 -path "$REPO_ROOT/__pycache__" -prune -o \
-                 -path "$REPO_ROOT/dist" -prune -o \
-                 -path "$REPO_ROOT/build" -prune -o \
-                 -type f \( -name "*.tmpl" -prune -o -print \) 2>/dev/null \
-                 | xargs grep -l "{{[A-Z_]*}}" 2>/dev/null \
-                 | grep -v "\.tmpl$" \
-                 | grep -v "docs/decisions/" \
-                 | grep -vF "$self_path" || true)
+  stragglers=$(grep -lE "\{\{[A-Z_]+\}\}" "${RENDERED_PATHS[@]}" 2>/dev/null || true)
 
   if [ -n "$stragglers" ]; then
     warn "Unresolved placeholders found in rendered files:"
-    echo "$stragglers" | sed 's/^/      /'
+    echo "$stragglers" | sed 's|^|      |'
     warn "Check the .tmpl source files for unknown placeholders."
-  else
-    ok "no unresolved placeholders"
+    # Template-grade contract: an unresolved placeholder is a render failure.
+    # Exit 2 matches the documented \"template render failure\" code in the
+    # script header. Silent-failure prevention is part of the template's
+    # core guarantees — do NOT downgrade this back to a warning.
+    exit 2
   fi
+
+  ok "no unresolved placeholders"
 }
 
 # --- Summary --------------------------------------------------------------
