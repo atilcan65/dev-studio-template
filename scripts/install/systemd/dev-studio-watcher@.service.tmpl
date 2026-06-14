@@ -1,32 +1,50 @@
 [Unit]
 Description=Multi-Agent Dev Studio watcher (project--role: %i)
 Documentation=https://github.com/{{GITHUB_OWNER}}/{{GITHUB_REPO}}/blob/main/docs/decisions/ADR-0010-per-project-watchers.md
+Documentation=https://github.com/{{GITHUB_OWNER}}/{{GITHUB_REPO}}/blob/main/docs/decisions/ADR-0011-watcher-dropin-override.md
 After=network-online.target
 Wants=network-online.target
 
+# -----------------------------------------------------------------------------
+# BASE TEMPLATE — INTENTIONALLY INCOMPLETE (ADR-0011).
+#
+# This unit alone does NOT define WorkingDirectory, ExecStart, or
+# StandardOutput/Error. Those MUST come from a per-instance drop-in:
+#
+#   ~/.config/systemd/user/dev-studio-watcher@<project>--<role>.service.d/override.conf
+#
+# `dev-studio-install-systemd.sh` writes the drop-in at install time with
+# absolute paths (which systemd CANNOT expand from EnvironmentFile for
+# WorkingDirectory / StandardOutput — see ADR-0011 for rationale).
+#
+# Starting this unit without its drop-in will fail with:
+#   "Service has no ExecStart= setting, refusing."
+# That failure is the intended safety net — it makes "you forgot to run
+# the installer" loud instead of silent.
+# -----------------------------------------------------------------------------
+
 [Service]
 Type=simple
-# Per-instance env file written by dev-studio-install-systemd.sh
+
+# Per-instance env file written by dev-studio-install-systemd.sh.
 # Provides: REPO_ROOT, ROLE, PROJECT, DEV_STUDIO_HEARTBEAT_DIR, AGENT_STATE_DIR
+# These vars ARE expanded inside ExecStart= (which is set by the drop-in)
+# and are exported to agent-watch.sh as environment variables.
 EnvironmentFile=%h/.config/dev-studio/instances/%i.env
-WorkingDirectory=${REPO_ROOT}
-ExecStart=/usr/bin/bash ${REPO_ROOT}/scripts/agent-watch.sh ${ROLE} --loop
+
 Restart=always
 RestartSec=5
 # Avoid restart storms if agent-watch.sh itself is broken
 StartLimitIntervalSec=60
 StartLimitBurst=10
-# Per-role log file under per-project subdir (append; agent-watch.sh has its own structured logging)
-StandardOutput=append:${DEV_STUDIO_HEARTBEAT_DIR}/${ROLE}.watch.log
-StandardError=append:${DEV_STUDIO_HEARTBEAT_DIR}/${ROLE}.watch.log
+
 # Resource hygiene: a misbehaving watcher should not eat the VM
 MemoryMax=512M
 TasksMax=64
+
 # Soft kill first, hard kill after 10s
 TimeoutStopSec=10
 KillMode=mixed
-# Extra per-instance overrides can go into:
-#   ~/.config/systemd/user/dev-studio-watcher@<project>--<role>.service.d/override.conf
 
 [Install]
 WantedBy=default.target

@@ -87,6 +87,16 @@ for role in "${ROLES[@]}"; do
 done
 ok "removed per-instance env files"
 
+# --- remove per-instance drop-in override dirs (ADR-0011) ----------------
+for role in "${ROLES[@]}"; do
+  instance="${PROJECT_NAME}--${role}"
+  dropin_dir="$SYSTEMD_USER_DIR/dev-studio-watcher@${instance}.service.d"
+  if [ -d "$dropin_dir" ]; then
+    rm -rf "$dropin_dir"
+  fi
+done
+ok "removed per-instance drop-in override dirs"
+
 # --- purge mode -----------------------------------------------------------
 if [ "$PURGE" = "1" ]; then
   log "PURGE mode: removing generic template + heartbeat dir"
