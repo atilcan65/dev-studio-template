@@ -187,16 +187,22 @@ EXISTING_OPTIONS="$(echo "$FIELDS_OUT" \
 # Reconcile: add missing options.
 # Note: updateProjectV2Field with singleSelectOptions REPLACES the full list,
 # so we must include ALL desired options (existing + new) in one mutation,
-# in our canonical order. Color is required by the schema (otherwise the
-# default 'GRAY' is used — fine for us).
-DESIRED_JSON='['
+# in our canonical order.
+#
+# IMPORTANT: gh api graphql passes -f/-F values as scalar strings/typed
+# scalars, not as structured JSON. Sending a complex list-of-objects via
+# `-f options="$JSON"` makes the server receive a string and fail with
+# "was provided invalid value". Instead, we build the options array as a
+# GraphQL *inline literal* inside the mutation text. We use the canonical
+# enum value GRAY for color (no quotes — it's an enum, not a string).
+OPTIONS_LITERAL=''
 first=1
 for opt in "${STATUS_OPTIONS[@]}"; do
-  [ $first -eq 1 ] || DESIRED_JSON+=','
+  [ $first -eq 1 ] || OPTIONS_LITERAL+=','
   first=0
-  DESIRED_JSON+="{\"name\":\"$opt\",\"color\":\"GRAY\",\"description\":\"\"}"
+  # name and description are GraphQL String, color is the enum ProjectV2SingleSelectFieldOptionColor
+  OPTIONS_LITERAL+="{name:\"$opt\",color:GRAY,description:\"\"}"
 done
-DESIRED_JSON+=']'
 
 # Only mutate if the set differs (idempotency + avoid pointless writes).
 NEEDS_UPDATE=0
@@ -209,15 +215,15 @@ done
 
 if [ "$NEEDS_UPDATE" = "1" ]; then
   log "reconciling Status options to: ${STATUS_OPTIONS[*]}"
-  UPDATE_OUT="$(gh api graphql -f query='
-    mutation($fieldId:ID!, $options:[ProjectV2SingleSelectFieldOptionInput!]!){
-      updateProjectV2Field(input:{fieldId:$fieldId, singleSelectOptions:$options}){
+  UPDATE_OUT="$(gh api graphql -f query="
+    mutation(\$fieldId:ID!){
+      updateProjectV2Field(input:{fieldId:\$fieldId, singleSelectOptions:[${OPTIONS_LITERAL}]}){
         projectV2Field {
           __typename
           ... on ProjectV2SingleSelectField { id name options { name } }
         }
       }
-    }' -f fieldId="$STATUS_FIELD_ID" -f options="$DESIRED_JSON" 2>&1 || true)"
+    }" -f fieldId="$STATUS_FIELD_ID" 2>&1 || true)"
 
   if echo "$UPDATE_OUT" | grep -q '"errors"'; then
     err "updateProjectV2Field failed:"
