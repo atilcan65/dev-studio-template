@@ -82,6 +82,50 @@ syntactically valid before init runs. In practice the GraphQL call will
 fail loudly with `NOT_FOUND` if `PROJECT_TOKEN` is missing, surfacing the
 misconfiguration in Actions logs rather than silently no-op'ing.
 
+### Live health-check (added 2026-06-14, after first failure)
+
+Writing the secret via `gh secret set` validates **storage only** —
+GitHub accepts any bytes you hand it. The first AtilCalculator bootstrap
+hit this exact gap: the secret was "written", every init log line was
+green, the user submitted a Vision issue, and the board-sync workflow
+failed with `HTTP 401 Bad credentials`. Root cause was an invisible
+character in the env-var path that survived the `printf '%s'` write but
+was rejected by GitHub at workflow runtime. Debugging consumed ~30
+minutes and exposed a class of failures (token revoked, scope missing,
+format malformed) that are all silent at write time and loud at use
+time.
+
+To close this gap, `ensure_project_token()` now performs a **live
+GitHub API ping** immediately after the secret write:
+
+```bash
+http_code="$(curl -fsS -o /dev/null -w '%{http_code}' \
+  --max-time 10 \
+  -H "Authorization: Bearer $token" \
+  -H "Accept: application/vnd.github+json" \
+  https://api.github.com/user 2>/dev/null || echo "000")"
+```
+
+Mapping:
+
+| HTTP | Meaning | Action |
+|---|---|---|
+| 200 | Token valid and authenticates | `ok` log, continue init |
+| 401 | Token rejected (revoked, expired, malformed) | `fail` with regenerate-PAT instruction |
+| 403 | Authenticated but lacks scope | `fail` with scope guidance |
+| 000 | Network unreachable / timeout | `fail` with connectivity hint |
+| other | Unexpected response | `fail` with diagnostic prompt |
+
+The check fires on the live token (not the secret), because the secret
+is write-only via `gh secret set`. A passing local check effectively
+guarantees the secret is identical (same bytes that just authenticated)
+and will work in the workflow runner. The 10-second timeout prevents
+the init script hanging on network issues; `--max-time` is a hard cap.
+
+**Skip conditions still honored:** `DRY_RUN=1` and
+`DEV_STUDIO_SKIP_PROJECT_TOKEN=1` both skip the entire
+`ensure_project_token()` function, including the health check.
+
 ## Alternatives considered
 
 ### A. GitHub App
