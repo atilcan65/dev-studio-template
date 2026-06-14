@@ -123,11 +123,14 @@ Bu workflow `Backlog grooming`'in **önkoşulu**. `docs/product/vision.md` ve `d
    ./scripts/notify.sh -l info "[PM→HUMAN] Vision PR #<PR-N> ready for review (intake issue #<N>)"
    ```
 
-9. **Issue label'ını flip et** (PM bölümünü tamamladı, ama backlog grooming PR-merge sonrası):
+9. **Issue label'ını atomik flip et** (PM bölümünü tamamladı, vision PR insanın review'una hazır — ADR-0015 atomic hand-off):
    ```bash
-   gh issue edit <N> --remove-label "agent:product-manager" --add-label "cc:product-manager"
+   gh issue edit <N> \
+     --add-label    "agent:human" \
+     --add-label    "cc:product-manager" \
+     --remove-label "agent:product-manager"
    ```
-   Bu sayede vision PR merge edilince orchestrator senin tekrar uyanman gerektiğini bilir; grooming'e geçersin.
+   **Sıra önemli:** önce yeni `agent:*` eklenir (4-cat invariant her t anında dolu kalır, ADR-0012), sonra eski silinir. `cc:product-manager` kalır — vision PR merge edildikten sonra orchestrator seni grooming'e tekrar uyandırır.
 
 **Anti-pattern'ler:**
 - ❌ Vision'ı doğrudan main'e push — PR yasak ihlali.

@@ -260,23 +260,49 @@ Karşıtı: PR açıp "sonradan eklerim" demek yok. İlk `gh pr create` komutund
 
 ## Handoff Label Discipline — the universal contract
 
-**TL;DR**: `cc:*` etiketleri "topun kimde olduğunu" gösterir. Bir aksiyon bitince **kendi** `cc:<your-role>` label'ını çıkar, **sonraki rolün** `cc:<next-role>` label'ını ekle. Aksi halde watcher loop seni aynı PR'da tekrar tekrar uyandırır ya da sistem freeze olur.
+**TL;DR**: `cc:*` etiketleri "topun kimde olduğunu", `agent:*` etiketleri "işin kime ait olduğunu" gösterir. Bir aksiyon bitince hem `cc:*` hem `agent:*` etiketlerini **atomik** bir komutla "önce-ekle-sonra-sil" sırasıyla çevir. Aksi halde 4-cat invariant (ADR-0012) ihlal olur, watcher loop seni aynı PR'da tekrar tekrar uyandırır ya da sistem freeze olur.
 
-### The contract (gelişmesi gereken her PR/Issue için)
+### The contract — ADR-0015 atomic 4-flag hand-off
 
-Her agent **kendi işini bitirdiğinde**:
+Her agent **kendi turunu bir sonraki sahibe devrederken** (`<self>` → `<next>`):
 
-1. **Çıkar**: `gh pr edit N --remove-label cc:<your-role>` (kendi top'unu indir)
-2. **Ekle**: `gh pr edit N --add-label cc:<next-role>` (sıradaki rolü işaretle) — veya `status:ready` (insan için sinyal)
-3. **Auto-ping**: `scripts/notify.sh -l <next-role> "[<YOU>→<NEXT>] PR #N <reason>"` (Telegram mirror)
+```bash
+gh issue edit N \
+  --add-label    "agent:<next>" \
+  --add-label    "cc:<next>" \
+  --remove-label "cc:<self>" \
+  --remove-label "agent:<self>"
+```
 
-Bu üç adım **atomik tek bir hareket** olarak düşünülür. Birini atlamak loop'u kırar.
+**Sıra zorunlu:** önce iki `--add-label` (4-cat invariant her t anında dolu kalır), sonra iki `--remove-label`. `gh` bunu soldan sağa işler; örtüşme anında issue'da iki `agent:*` label'ı olur — ADR-0012 Label Check `length > 0` kontrolü kullanıyor, sorun olmaz.
+
+Eşlik eden adımlar:
+- **Auto-ping**: `scripts/notify.sh -l <next-role> "[<YOU>→<NEXT>] PR #N <reason>"` (Telegram mirror)
+- **Yorum (isteğe bağlı ama önerilir)**: `gh issue comment N --body "..."` — ne yaptığın + neden hand-off olduğu
+
+Bu dört etiket flip + ping **atomik tek bir hareket** olarak düşünülür. Birini atlamak loop'u kırar.
+
+### Sadece `cc:*` flip (peer review, question, scope drift)
+
+Eğer turunu **tamamlamadın**, sadece peşinde olan rolü değiştiriyorsun (örn. PR'a soru sordun, cevap bekliyorsun) — `agent:*` etiketine dokunma:
+
+```bash
+gh issue edit N \
+  --add-label    "cc:<next>" \
+  --remove-label "cc:<self>"
+```
+
+Bu kullanım, hand-off değil **queue passing**'tir. `agent:*` değişmediği için 4-cat invariant her zaman dolu kalır.
+
+### Terminal hand-off (Done)
+
+Orchestrator iş Done'a girdiğinde `agent:*` + `cc:*`'i temizler ve `status:done` ekler. Label Check workflow kapalı (closed) issue'ları ignore eder, bu bypass güvenlidir.
 
 ### Label semantik sözlüğü
 
 | Label | Anlamı | Kim koyar | Kim kaldırır |
 |---|---|---|---|
-| `agent:<role>` | Issue/story bu role atandı (sahip) | orchestrator (story oluşturulduğunda) | story Done olunca orchestrator |
+| `agent:<role>` | Issue/story bu role atandı (sahip) | story oluşturan rol veya hand-off sırasında önceki sahip (ADR-0015) | terminal Done'da orchestrator |
 | `cc:<role>` | Top şu an o role düşütülüyor (active queue) | top'u atan rol | o rolü kendisi (işi bitince) |
 | `status:in-review` | PR review sürecinde | developer (PR ready iken) | orchestrator/human (merge öncesi) |
 | `status:ready` | Tester+arch onayı var, insan merge edebilir | tester (APPROVED verdict ile birlikte) | human (merge ile birlikte) |
