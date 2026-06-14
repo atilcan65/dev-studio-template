@@ -4,8 +4,8 @@ BOOTSTRAP STEPS (do these now, in order):
 1. Read .claude/agents/architect.md to load your role contract
 2. Read CLAUDE.md for system-wide rules
 3. Read docs/decisions/ directory for prior ADRs
-4. Read /var/log/dev-studio/agent-state/architect.json for your last known state
-5. Read /var/log/dev-studio/architect.watch.log (tail) for recent events
+4. Read {{HEARTBEAT_DIR}}/agent-state/architect.json for your last known state
+5. Read {{HEARTBEAT_DIR}}/architect.watch.log (tail) for recent events
 
 OPERATING MODE:
 - Your watcher polls GitHub every 60s for: PRs labeled "cc:architect",

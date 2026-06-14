@@ -32,14 +32,18 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 STATE_HELPER="$SCRIPT_DIR/agent-state.sh"
 NOTIFY="$SCRIPT_DIR/notify.sh"
-STATE_DIR="${AGENT_STATE_DIR:-/var/log/dev-studio/agent-state}"
-LOG_DIR="${AGENT_LOG_DIR:-/var/log/dev-studio}"
+# Per-project defaults (ADR-0010): infer project name from script location's repo root.
+_AD_PROJECT_DEFAULT="$(basename "$(cd "$SCRIPT_DIR/.." && pwd)")"
+_AD_HEARTBEAT_BASE="${DEV_STUDIO_HEARTBEAT_BASE:-/var/log/dev-studio}"
+PROJECT_NAME="${DEV_STUDIO_PROJECT_NAME:-$_AD_PROJECT_DEFAULT}"
+LOG_DIR="${AGENT_LOG_DIR:-$_AD_HEARTBEAT_BASE/$PROJECT_NAME}"
+STATE_DIR="${AGENT_STATE_DIR:-$LOG_DIR/agent-state}"
 STALE_SEC="${AGENT_HEARTBEAT_STALE_SEC:-300}"
 
 ROLES=(orchestrator product-manager architect developer tester)
 
-# --- systemd helpers (ADR-0006) ---
-unit_for() { echo "dev-studio-watcher@${1}.service"; }
+# --- systemd helpers (ADR-0010) ---
+unit_for() { echo "dev-studio-watcher@${PROJECT_NAME}--${1}.service"; }
 
 unit_enabled() {
   systemctl --user is-enabled "$(unit_for "$1")" >/dev/null 2>&1

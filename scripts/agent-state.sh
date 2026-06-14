@@ -37,7 +37,12 @@
 
 set -euo pipefail
 
-STATE_DIR="${AGENT_STATE_DIR:-/var/log/dev-studio/agent-state}"
+# Per-project default (ADR-0010): infer project name from script location's repo root.
+# Allow explicit AGENT_STATE_DIR override (used by systemd unit env files).
+_AS_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+_AS_PROJECT_DEFAULT="$(basename "$(cd "$_AS_SCRIPT_DIR/.." && pwd)")"
+_AS_HEARTBEAT_BASE="${DEV_STUDIO_HEARTBEAT_BASE:-/var/log/dev-studio}"
+STATE_DIR="${AGENT_STATE_DIR:-$_AS_HEARTBEAT_BASE/$_AS_PROJECT_DEFAULT/agent-state}"
 DEFAULT_POLL="${AGENT_POLL_INTERVAL_SEC:-60}"
 DEFAULT_TRIM_MAX="${AGENT_PROCESSED_MAX:-200}"
 DEFAULT_STALE_SEC="${AGENT_HEARTBEAT_STALE_SEC:-300}"

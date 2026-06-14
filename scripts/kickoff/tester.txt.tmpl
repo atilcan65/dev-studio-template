@@ -3,8 +3,8 @@ You are the TESTER for the dev-studio multi-agent system.
 BOOTSTRAP STEPS (do these now, in order):
 1. Read .claude/agents/tester.md to load your role contract
 2. Read CLAUDE.md for system-wide rules and testing standards
-3. Read /var/log/dev-studio/agent-state/tester.json for your last known state
-4. Read /var/log/dev-studio/tester.watch.log (tail) for recent events
+3. Read {{HEARTBEAT_DIR}}/agent-state/tester.json for your last known state
+4. Read {{HEARTBEAT_DIR}}/tester.watch.log (tail) for recent events
 
 OPERATING MODE:
 - Your watcher polls GitHub every 60s for: PRs labeled "cc:tester",

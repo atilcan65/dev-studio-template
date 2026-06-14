@@ -336,24 +336,24 @@ gh pr merge <num> --squash --delete-branch
 | Dosya/Klasör | Önem | Frekans |
 |---|---|---|
 | `~/.dev-studio-env` | Kritik (token'lar) | İlk setup + her değişiklikte |
-| `/var/log/dev-studio/agent-state/*.json` | Orta (regenerate edilebilir) | Günlük |
+| `{{HEARTBEAT_DIR}}/agent-state/*.json` | Orta (regenerate edilebilir) | Günlük |
 | `logs/` | Düşük | Haftalık |
 | `docs/decisions/` | Yüksek (ADR'lar git'te ama yedek iyidir) | Git push ile zaten |
 
 ### 6.2 State backup
 
 State dosyaları per-rol JSON şeklinde `$AGENT_STATE_DIR` altında durur
-(default: `/var/log/dev-studio/agent-state/`). Tümünü tek tarball'a al:
+(default: `{{HEARTBEAT_DIR}}/agent-state/`). Tümünü tek tarball'a al:
 
 ```bash
 mkdir -p backups
 tar czf backups/agent-state-$(date +%Y%m%d-%H%M).tar.gz \
-    -C /var/log/dev-studio agent-state
+    -C {{HEARTBEAT_DIR}} agent-state
 ```
 
 Bunu cron'a koy (günlük):
 ```cron
-0 2 * * * tar czf /home/atilcan/backups/agent-state-$(date +\%Y\%m\%d).tar.gz -C /var/log/dev-studio agent-state
+0 2 * * * tar czf /home/atilcan/backups/agent-state-$(date +\%Y\%m\%d).tar.gz -C {{HEARTBEAT_DIR}} agent-state
 ```
 
 ### 6.3 Label snapshot (referans için)

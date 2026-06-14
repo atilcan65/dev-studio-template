@@ -1,33 +1,32 @@
 [Unit]
-Description=Multi-Agent Dev Studio watcher for role %i
-Documentation=https://github.com/{{GITHUB_OWNER}}/{{GITHUB_REPO}}/blob/main/docs/decisions/ADR-0006-watcher-resilience.md
+Description=Multi-Agent Dev Studio watcher (project--role: %i)
+Documentation=https://github.com/{{GITHUB_OWNER}}/{{GITHUB_REPO}}/blob/main/docs/decisions/ADR-0010-per-project-watchers.md
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
-WorkingDirectory={{REPO_ROOT}}
-# %i = role name (orchestrator, product-manager, architect, developer, tester)
-ExecStart=/usr/bin/bash {{REPO_ROOT}}/scripts/agent-watch.sh %i --loop
+# Per-instance env file written by dev-studio-install-systemd.sh
+# Provides: REPO_ROOT, ROLE, PROJECT, DEV_STUDIO_HEARTBEAT_DIR, AGENT_STATE_DIR
+EnvironmentFile=%h/.config/dev-studio/instances/%i.env
+WorkingDirectory=${REPO_ROOT}
+ExecStart=/usr/bin/bash ${REPO_ROOT}/scripts/agent-watch.sh ${ROLE} --loop
 Restart=always
 RestartSec=5
 # Avoid restart storms if agent-watch.sh itself is broken
 StartLimitIntervalSec=60
 StartLimitBurst=10
-# Per-role log file (append; agent-watch.sh has its own structured logging)
-StandardOutput=append:/var/log/dev-studio/%i.watch.log
-StandardError=append:/var/log/dev-studio/%i.watch.log
+# Per-role log file under per-project subdir (append; agent-watch.sh has its own structured logging)
+StandardOutput=append:${DEV_STUDIO_HEARTBEAT_DIR}/${ROLE}.watch.log
+StandardError=append:${DEV_STUDIO_HEARTBEAT_DIR}/${ROLE}.watch.log
 # Resource hygiene: a misbehaving watcher should not eat the VM
 MemoryMax=512M
 TasksMax=64
 # Soft kill first, hard kill after 10s
 TimeoutStopSec=10
 KillMode=mixed
-# Environment overrides can be added per role via drop-ins:
-#   ~/.config/systemd/user/dev-studio-watcher@developer.service.d/override.conf
-# e.g. to tighten backfill window for a specific role:
-#   [Service]
-#   Environment="PR_MERGED_BACKFILL=10 minutes ago"
+# Extra per-instance overrides can go into:
+#   ~/.config/systemd/user/dev-studio-watcher@<project>--<role>.service.d/override.conf
 
 [Install]
 WantedBy=default.target

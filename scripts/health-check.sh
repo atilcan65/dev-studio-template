@@ -18,7 +18,11 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 NOTIFY="${SCRIPT_DIR}/notify.sh"
-HEARTBEAT_DIR="/var/log/dev-studio"
+# Per-project default (ADR-0010): infer project name from script location's repo root.
+_HC_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+_HC_PROJECT_DEFAULT="$(basename "$(cd "$_HC_SCRIPT_DIR/.." && pwd)")"
+_HC_HEARTBEAT_BASE="${DEV_STUDIO_HEARTBEAT_BASE:-/var/log/dev-studio}"
+HEARTBEAT_DIR="${DEV_STUDIO_HEARTBEAT_DIR:-$_HC_HEARTBEAT_BASE/$_HC_PROJECT_DEFAULT}"
 HOSTNAME_TAG="$(hostname)"
 
 # Thresholds

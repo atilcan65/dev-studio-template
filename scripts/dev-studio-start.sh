@@ -25,7 +25,10 @@ SESSION="dev-studio"
 # Auto-detect repo root from script location, allow override via env
 # (kept overridable for tests / CI / non-standard layouts)
 REPO_ROOT="${DEV_STUDIO_REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
-HEARTBEAT_DIR="${DEV_STUDIO_HEARTBEAT_DIR:-/var/log/dev-studio}"
+# Per-project heartbeat dir (ADR-0010). Default: /var/log/dev-studio/<project>/
+PROJECT_NAME="${DEV_STUDIO_PROJECT_NAME:-$(basename "$REPO_ROOT")}"
+HEARTBEAT_BASE="${DEV_STUDIO_HEARTBEAT_BASE:-/var/log/dev-studio}"
+HEARTBEAT_DIR="${DEV_STUDIO_HEARTBEAT_DIR:-$HEARTBEAT_BASE/$PROJECT_NAME}"
 ENV_FILE="$HOME/.dev-studio-env"
 BOOT_DIR="$REPO_ROOT/scripts/.tmux-bootstrap"
 
@@ -74,9 +77,9 @@ cd "$REPO_ROOT"
 touch "$HEARTBEAT_DIR/${role}.heartbeat"
 
 WATCH_LOG="$HEARTBEAT_DIR/${role}.watch.log"
-WATCH_UNIT="dev-studio-watcher@${role}.service"
+WATCH_UNIT="dev-studio-watcher@${PROJECT_NAME}--${role}.service"
 
-# --- watcher mode detection (ADR-0006) ---
+# --- watcher mode detection (ADR-0010) ---
 WATCHER_MODE="nohup"
 if systemctl --user is-enabled "\$WATCH_UNIT" >/dev/null 2>&1; then
   WATCHER_MODE="systemd"
@@ -140,7 +143,7 @@ KICKOFF_FILE="$REPO_ROOT/scripts/kickoff/${role}.txt"
 if [ -f "\$KICKOFF_FILE" ]; then
   KICKOFF_PROMPT="\$(cat "\$KICKOFF_FILE")"
 else
-  KICKOFF_PROMPT="Read .claude/agents/${role}.md and CLAUDE.md. Check /var/log/dev-studio/agent-state/${role}.json for pending events. Act on events or wait for next watcher poll."
+  KICKOFF_PROMPT="Read .claude/agents/${role}.md and CLAUDE.md. Check $HEARTBEAT_DIR/agent-state/${role}.json for pending events. Act on events or wait for next watcher poll."
 fi
 
 claude --dangerously-skip-permissions --agent "${role}" --append-system-prompt-file "$REPO_ROOT/.claude/agents/${role}.md" "\$KICKOFF_PROMPT"
