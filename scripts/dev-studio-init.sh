@@ -107,11 +107,18 @@ resolve_values() {
 
   # REPO_ROOT already resolved at the top.
 
+  # Per-project derived values (ADR-0010).
+  PROJECT_NAME="${DEV_STUDIO_PROJECT_NAME:-$(basename "$REPO_ROOT")}"
+  HEARTBEAT_BASE="${DEV_STUDIO_HEARTBEAT_BASE:-/var/log/dev-studio}"
+  HEARTBEAT_DIR="$HEARTBEAT_BASE/$PROJECT_NAME"
+
   printf '\n%s  Placeholder values resolved:%s\n' "$C_BOLD" "$C_RESET"
   printf '    REPO_ROOT        = %s\n' "$REPO_ROOT"
   printf '    GITHUB_OWNER     = %s\n' "$GITHUB_OWNER"
   printf '    GITHUB_REPO      = %s\n' "$GITHUB_REPO"
-  printf '    HUMAN_OWNER_NAME = %s\n\n' "$HUMAN_OWNER_NAME"
+  printf '    HUMAN_OWNER_NAME = %s\n' "$HUMAN_OWNER_NAME"
+  printf '    PROJECT_NAME     = %s\n' "$PROJECT_NAME"
+  printf '    HEARTBEAT_DIR    = %s\n\n' "$HEARTBEAT_DIR"
 }
 
 # --- Render a single .tmpl file -------------------------------------------
@@ -139,6 +146,8 @@ render_one() {
       -e "s|{{GITHUB_OWNER}}|${GITHUB_OWNER}|g" \
       -e "s|{{GITHUB_REPO}}|${GITHUB_REPO}|g" \
       -e "s|{{HUMAN_OWNER_NAME}}|${HUMAN_OWNER_NAME}|g" \
+      -e "s|{{PROJECT_NAME}}|${PROJECT_NAME}|g" \
+      -e "s|{{HEARTBEAT_DIR}}|${HEARTBEAT_DIR}|g" \
       "$src" > "$dst"
 
   # Preserve executable bit if source had it (relevant for shell templates).
@@ -235,8 +244,8 @@ summary() {
     || printf '  mode:    %srender%s\n' "$C_GREEN" "$C_RESET"
   printf '\nNext steps:\n'
   printf '  1) bash scripts/dev-studio-start.sh start    # launch tmux session\n'
-  printf '  2) bash scripts/install/dev-studio-install-systemd.sh   # (optional) install systemd watchers\n'
-  printf '  3) Open a GitHub issue with label "agent:product-manager" to feed your vision\n\n'
+  printf '  2) Open a GitHub issue with label "agent:product-manager" to feed your vision\n'
+  printf '     (watchers are already running per-project via systemd; see ADR-0010)\n\n'
 }
 
 # --- Project board bootstrap ---------------------------------------------
@@ -277,6 +286,40 @@ bootstrap_board() {
   fi
 }
 
+# --- Per-project systemd watcher install ---------------------------------
+# Installs 5 systemd --user watcher instances scoped to this project so they
+# survive tmux/Claude exits and don't collide with other projects' watchers.
+# Soft-fails if systemd --user is unavailable (e.g. container CI) so the rest
+# of init still succeeds and pane-bootstrap falls back to nohup mode.
+# Per ADR-0010.
+install_systemd_watchers() {
+  [ "$DRY_RUN" = "1" ] && { log "skipping systemd install (dry-run)"; return 0; }
+
+  if [ "${DEV_STUDIO_SKIP_SYSTEMD:-0}" = "1" ]; then
+    log "skipping systemd install (DEV_STUDIO_SKIP_SYSTEMD=1)"
+    return 0
+  fi
+
+  if ! systemctl --user --no-pager show-environment >/dev/null 2>&1; then
+    warn "systemd --user not available; pane-bootstrap will use nohup fallback"
+    return 0
+  fi
+
+  local script="$REPO_ROOT/scripts/install/dev-studio-install-systemd.sh"
+  if [ ! -x "$script" ]; then
+    warn "install-systemd.sh not found or not executable — skipping"
+    return 0
+  fi
+
+  log "installing per-project systemd watchers"
+  if PROJECT_NAME="$(basename "$REPO_ROOT")" REPO_ROOT="$REPO_ROOT" "$script"; then
+    ok "systemd watchers installed"
+  else
+    warn "systemd install failed (soft-fail) — pane-bootstrap will use nohup fallback"
+    warn "Re-run manually: bash $script"
+  fi
+}
+
 # --- Main -----------------------------------------------------------------
 
 main() {
@@ -285,6 +328,7 @@ main() {
   render_all
   verify
   bootstrap_board
+  install_systemd_watchers
   summary
 }
 

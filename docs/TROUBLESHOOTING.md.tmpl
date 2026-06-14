@@ -181,9 +181,9 @@ gh label list -R atilcan65/$REPO_NAME | wc -l
    ```
    **Beklenen:** `agent:product-manager` (iki nokta sonrası boşluk YOK)
 
-4. Agent busy ise per-role state file'a bak (her rolün ayrı dosyası var, `/var/log/dev-studio/agent-state/<role>.json`):
+4. Agent busy ise per-role state file'a bak (her rolün ayrı dosyası var, `{{HEARTBEAT_DIR}}/agent-state/<role>.json`):
    ```bash
-   cat /var/log/dev-studio/agent-state/product-manager.json | jq .
+   cat {{HEARTBEAT_DIR}}/agent-state/product-manager.json | jq .
    ```
    Veya `agent-state.sh` ile (env-aware):
    ```bash

@@ -151,7 +151,7 @@ bash scripts/agent-watch.sh <your-role>
 
 ### State management
 
-- State dosyan: `/var/log/dev-studio/agent-state/<your-role>.json`
+- State dosyan: `{{HEARTBEAT_DIR}}/agent-state/<your-role>.json`
 - `agent-watch.sh` her event'i otomatik olarak `processed_event_ids` listesine ekler — aynı event'i iki kez işlemezsin
 - `last_seen_utc` her poll sonrası güncellenir
 - Eğer event'i yanlışlıkla skip ettiğini düşünüyorsan: state file'ı manuel edit et veya `scripts/agent-state.sh set <role> last_seen_utc <ISO-timestamp>` ile geri sar

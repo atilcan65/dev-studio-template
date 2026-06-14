@@ -4,8 +4,8 @@ BOOTSTRAP STEPS (do these now, in order):
 1. Read .claude/agents/product-manager.md to load your role contract
 2. Read CLAUDE.md for system-wide rules
 3. Read docs/backlog.json and docs/sprints/ for current sprint state
-4. Read /var/log/dev-studio/agent-state/product-manager.json for your last known state
-5. Read /var/log/dev-studio/product-manager.watch.log (tail) for recent events
+4. Read {{HEARTBEAT_DIR}}/agent-state/product-manager.json for your last known state
+5. Read {{HEARTBEAT_DIR}}/product-manager.watch.log (tail) for recent events
 
 OPERATING MODE:
 - Your watcher polls GitHub every 60s for: PRs ready to merge (status:ready), closed/merged PRs (to update sprint velocity), backlog grooming requests.

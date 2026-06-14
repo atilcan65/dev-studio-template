@@ -15,7 +15,7 @@ Sen **Orchestrator**'sın. Günlük standup raporu hazırla.
    - Merge edilen PR'lar: `gh pr list --state merged --search "merged:>$(date -d '24 hours ago' --iso-8601)"`
    - Açık PR'lar (review bekliyor)
    - In Progress issue'lar
-   - Heartbeat dosyaları: `/var/log/dev-studio/<agent>.heartbeat` → son timestamp.
+   - Heartbeat dosyaları: `{{HEARTBEAT_DIR}}/<agent>.heartbeat` → son timestamp.
 
 3. **Blocker'ları tespit et**:
    - `status:blocked` label'lı issue'lar
