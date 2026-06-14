@@ -1,0 +1,120 @@
+name: Label Check (ADR-0012)
+
+# Enforces the 4-category required label set on every issue and PR:
+#   - type:*     (one of: vision, feature, bug, docs, chore, refactor, incident)
+#   - status:*   (one of: backlog, ready, in-progress, in-review, blocked, done)
+#   - agent:*    (one of: orchestrator, product-manager, architect, developer, tester, human)
+#   - cc:*       (one of: orchestrator, product-manager, architect, developer, tester)
+#
+# If any category is missing, the workflow comments on the issue/PR listing
+# exactly which categories are missing (idempotent — replaces its own previous
+# comment) and the check fails. Re-fires on every label/unlabel event so the
+# agent fix-back loop drives it green.
+#
+# See docs/decisions/ADR-0012-required-label-set.md for the full rationale.
+
+on:
+  issues:
+    types: [opened, reopened, labeled, unlabeled]
+  pull_request_target:
+    types: [opened, reopened, labeled, unlabeled]
+
+permissions:
+  issues: write
+  pull-requests: write
+
+jobs:
+  label-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify required label categories
+        uses: actions/github-script@v7
+        env:
+          MARKER: "<!-- adr-0012-label-check -->"
+        with:
+          script: |
+            const marker = process.env.MARKER;
+            const isPR = !!context.payload.pull_request;
+            const target = isPR ? context.payload.pull_request : context.payload.issue;
+            const number = target.number;
+            const labels = (target.labels || []).map(l => (typeof l === 'string' ? l : l.name));
+
+            // Recognised label sets — keep in sync with scripts/bootstrap-labels.sh
+            const required = {
+              'type:':   ['vision','feature','bug','docs','chore','refactor','incident'],
+              'status:': ['backlog','ready','in-progress','in-review','blocked','done'],
+              'agent:':  ['orchestrator','product-manager','architect','developer','tester','human'],
+              'cc:':     ['orchestrator','product-manager','architect','developer','tester'],
+            };
+
+            const present = {};
+            const missing = [];
+            for (const [prefix, options] of Object.entries(required)) {
+              const found = labels.filter(l => l && l.startsWith(prefix));
+              present[prefix] = found;
+              if (found.length === 0) {
+                missing.push({ prefix, options });
+              }
+            }
+
+            const kind = isPR ? 'PR' : 'Issue';
+            core.info(`${kind} #${number} labels: ${labels.join(', ') || '(none)'}`);
+            core.info(`Present per category: ${JSON.stringify(present)}`);
+
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+
+            // Find existing bot comment by marker
+            const { data: comments } = await github.rest.issues.listComments({
+              owner, repo, issue_number: number, per_page: 100,
+            });
+            const existing = comments.find(c =>
+              c.user && c.user.type === 'Bot' && c.body && c.body.includes(marker)
+            );
+
+            if (missing.length === 0) {
+              // Success — clean up any prior failure comment, exit green
+              if (existing) {
+                const body = `${marker}\n✅ **Label check passed (ADR-0012).** All four required categories are present.`;
+                await github.rest.issues.updateComment({
+                  owner, repo, comment_id: existing.id, body,
+                });
+              }
+              core.info(`✅ All 4 required categories present on ${kind} #${number}.`);
+              return;
+            }
+
+            // Build failure comment
+            const lines = [
+              marker,
+              `### ❌ Label check failed (ADR-0012)`,
+              ``,
+              `This ${kind.toLowerCase()} is missing labels from the following required categor${missing.length === 1 ? 'y' : 'ies'}. Per [ADR-0012](../blob/main/docs/decisions/ADR-0012-required-label-set.md), every issue and PR must carry **one label from each of the four categories** at birth.`,
+              ``,
+              `| Category | Status | Pick one of |`,
+              `|---|---|---|`,
+            ];
+            for (const [prefix, options] of Object.entries(required)) {
+              const ok = present[prefix].length > 0;
+              const status = ok ? `✅ \`${present[prefix].join(', ')}\`` : `❌ **missing**`;
+              const picks = options.map(o => `\`${prefix}${o}\``).join(', ');
+              lines.push(`| \`${prefix}*\` | ${status} | ${picks} |`);
+            }
+            lines.push(``);
+            lines.push(`Fix: \`gh ${isPR ? 'pr' : 'issue'} edit ${number} ${missing.map(m => `--add-label "${m.prefix}<pick>"`).join(' ')}\``);
+            lines.push(``);
+            lines.push(`This check re-runs on every label change, so it will turn green automatically once the missing categories are added.`);
+
+            const body = lines.join('\n');
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner, repo, comment_id: existing.id, body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner, repo, issue_number: number, body,
+              });
+            }
+
+            core.setFailed(`${kind} #${number} missing required label categor${missing.length === 1 ? 'y' : 'ies'}: ${missing.map(m => m.prefix + '*').join(', ')}`);

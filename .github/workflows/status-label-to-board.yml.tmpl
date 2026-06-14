@@ -1,0 +1,173 @@
+name: Status Label → Board Sync (ADR-0013)
+
+# Mirrors `status:*` label changes on issues and PRs onto the Projects v2
+# board's "Status" field. The board is owned by {{GITHUB_OWNER}} as project
+# number {{GITHUB_PROJECT_NUMBER}}.
+#
+# Label → field-option mapping (see ADR-0013):
+#   status:backlog      → Backlog
+#   status:ready        → Ready
+#   status:in-progress  → In Progress
+#   status:in-review    → In Review
+#   status:blocked      → Blocked
+#   status:done         → Done
+#
+# Selection rule when multiple `status:*` labels are present: pick the
+# most-advanced (done > in-review > in-progress > blocked > ready > backlog).
+#
+# Auth: uses default GITHUB_TOKEN, which is sufficient for repo-owned user
+# projects. For org projects you may need to swap in a fine-grained PAT.
+#
+# See docs/decisions/ADR-0013-status-label-to-board-sync.md for the full
+# rationale and trade-offs.
+
+on:
+  issues:
+    types: [labeled, unlabeled]
+  pull_request_target:
+    types: [labeled, unlabeled]
+
+permissions:
+  issues: read
+  pull-requests: read
+  repository-projects: write
+
+jobs:
+  sync-status:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve label → status and update board
+        uses: actions/github-script@v7
+        env:
+          PROJECT_OWNER: "{{GITHUB_OWNER}}"
+          PROJECT_NUMBER: "{{GITHUB_PROJECT_NUMBER}}"
+          STATUS_FIELD_NAME: "Status"
+        with:
+          # Token note: the default GITHUB_TOKEN works for user-owned projects
+          # where the workflow runs in a repo owned by the same user. If you
+          # move the project to an org or another user, replace this with a
+          # PAT secret that has `project` scope.
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const owner = process.env.PROJECT_OWNER;
+            const projectNumber = parseInt(process.env.PROJECT_NUMBER, 10);
+            const statusFieldName = process.env.STATUS_FIELD_NAME;
+
+            if (!owner || !projectNumber) {
+              core.setFailed(`Project owner / number not configured (got owner="${owner}", number="${projectNumber}"). Re-render the template with GITHUB_OWNER and GITHUB_PROJECT_NUMBER set.`);
+              return;
+            }
+
+            const isPR = !!context.payload.pull_request;
+            const target = isPR ? context.payload.pull_request : context.payload.issue;
+            const number = target.number;
+            const nodeId = target.node_id;
+            const labels = (target.labels || []).map(l => (typeof l === 'string' ? l : l.name));
+
+            // Most-advanced first; selection picks the first match
+            const order = [
+              { label: 'status:done',        option: 'Done' },
+              { label: 'status:in-review',   option: 'In Review' },
+              { label: 'status:in-progress', option: 'In Progress' },
+              { label: 'status:blocked',     option: 'Blocked' },
+              { label: 'status:ready',       option: 'Ready' },
+              { label: 'status:backlog',     option: 'Backlog' },
+            ];
+
+            const match = order.find(o => labels.includes(o.label));
+            if (!match) {
+              core.info(`No status:* label on ${isPR ? 'PR' : 'issue'} #${number}; leaving board field untouched.`);
+              return;
+            }
+            core.info(`Selected status label: ${match.label} → board option "${match.option}"`);
+
+            // 1) Resolve project node id, Status field id, and the field-option id
+            const projQuery = `
+              query($owner: String!, $number: Int!) {
+                user(login: $owner) {
+                  projectV2(number: $number) {
+                    id
+                    field(name: "${statusFieldName}") {
+                      ... on ProjectV2SingleSelectField {
+                        id
+                        options { id name }
+                      }
+                    }
+                  }
+                }
+              }
+            `;
+            const projResp = await github.graphql(projQuery, { owner, number: projectNumber });
+            const project = projResp.user && projResp.user.projectV2;
+            if (!project) {
+              core.setFailed(`Project #${projectNumber} not found under user "${owner}".`);
+              return;
+            }
+            const field = project.field;
+            if (!field || !field.options) {
+              core.setFailed(`Field "${statusFieldName}" not found or not a single-select on project #${projectNumber}.`);
+              return;
+            }
+            const option = field.options.find(o => o.name === match.option);
+            if (!option) {
+              core.setFailed(`Field "${statusFieldName}" has no option "${match.option}". Add it via the Projects UI or bootstrap-project-board.sh.`);
+              return;
+            }
+
+            // 2) Resolve (or add) the project item for this issue/PR
+            // Try to find an existing item first
+            const itemQuery = `
+              query($projectId: ID!, $cursor: String) {
+                node(id: $projectId) {
+                  ... on ProjectV2 {
+                    items(first: 100, after: $cursor) {
+                      pageInfo { hasNextPage endCursor }
+                      nodes {
+                        id
+                        content { ... on Issue { id } ... on PullRequest { id } }
+                      }
+                    }
+                  }
+                }
+              }
+            `;
+            let cursor = null;
+            let itemId = null;
+            do {
+              const itemResp = await github.graphql(itemQuery, { projectId: project.id, cursor });
+              const page = itemResp.node.items;
+              const found = page.nodes.find(n => n.content && n.content.id === nodeId);
+              if (found) { itemId = found.id; break; }
+              cursor = page.pageInfo.hasNextPage ? page.pageInfo.endCursor : null;
+            } while (cursor);
+
+            if (!itemId) {
+              core.info(`Item not on board yet; adding…`);
+              const addResp = await github.graphql(`
+                mutation($projectId: ID!, $contentId: ID!) {
+                  addProjectV2ItemById(input: { projectId: $projectId, contentId: $contentId }) {
+                    item { id }
+                  }
+                }
+              `, { projectId: project.id, contentId: nodeId });
+              itemId = addResp.addProjectV2ItemById.item.id;
+            }
+
+            // 3) Update Status field on the item
+            await github.graphql(`
+              mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $optionId: String!) {
+                updateProjectV2ItemFieldValue(input: {
+                  projectId: $projectId,
+                  itemId: $itemId,
+                  fieldId: $fieldId,
+                  value: { singleSelectOptionId: $optionId }
+                }) { projectV2Item { id } }
+              }
+            `, {
+              projectId: project.id,
+              itemId,
+              fieldId: field.id,
+              optionId: option.id,
+            });
+
+            core.info(`✅ ${isPR ? 'PR' : 'Issue'} #${number} board status set to "${match.option}"`);

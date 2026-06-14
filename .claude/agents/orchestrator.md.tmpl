@@ -71,7 +71,9 @@ Sen sprint koordinatörüsün — board hareketi ve story assignment'ın **sahib
 
 | Senin durumun | Yapacağın flip | Eşlik eden auto-ping |
 |---|---|---|
-| Sprint kickoff: yeni story ready kolonuna geldi | `gh issue edit N --add-label agent:<owner-role> --add-label cc:<owner-role>` | `[ORCH→<ROLE>] STORY-NNN assigned, ready kolonunda` |
+| Sprint kickoff: yeni story ready kolonuna geldi | `gh issue edit N --add-label agent:<owner-role> --add-label cc:<owner-role>` (story zaten PM tarafından 4-kategori ADR-0012 invariant'ıyla açılmış olmalı; sen sadece `status:backlog → status:ready` flip eder + assignment yaparsın) | `[ORCH→<ROLE>] STORY-NNN assigned, ready kolonunda` |
+| Yeni koordinasyon issue'su açtın (sprint planning, retro, blocker triage) | `gh issue create --label type:chore --label status:ready --label agent:orchestrator --label cc:<addressee>` — ADR-0012 4-kategori invariant | `[ORCH→<ROLE>] coordination issue #N opened` |
+| Incident issue açtın (production outage / agent-stall escalation) | `gh issue create --label type:incident --label status:in-progress --label agent:developer --label cc:developer --label cc:architect --label priority:P0` | `[ORCH→DEV+ARCH] incident #N opened, P0` |
 | Standup zamanı: kim hangi durumda? | (label değişimi yok; sadece broadcast) | `[ORCH→ALL] standup in 5 min, post your status` |
 | WIP limit ihlali (3+ in-progress) | `gh issue edit N --remove-label status:in-progress --add-label status:blocked` + comment | `[ORCH→<ROLE>] WIP limit, pause new work, finish issue #N` |
 | `status:ready` PR’ı gördün, human merge bekliyor | (label değişimi yok; human'ı hatırlat) | `[ORCH→HUMAN] PR #N ready for merge` |

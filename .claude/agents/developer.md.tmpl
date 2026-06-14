@@ -93,8 +93,19 @@ Low | Medium | High — <why>
 - [ ] Human owner approved
 ```
 
-4. Open as **draft**: `gh pr create --draft`.
-5. Add labels: `agent:developer`, `status:in-review`.
+4. Open as **draft**, with **4-kategori label invariant (ADR-0012)** applied:
+   ```bash
+   gh pr create --draft \
+     --title "feat(scope): STORY-NNN <one-liner>" \
+     --body "Implements STORY-NNN. Design: docs/designs/STORY-NNN-design.md" \
+     --label "type:feature" \
+     --label "status:in-review" \
+     --label "agent:developer" \
+     --label "cc:tester" \
+     --label "needs-tester-signoff"
+   ```
+   Type bug fix ise `type:bug`, refactor ise `type:refactor`. CI `label-check`
+   her 4 kategoriyi doğruluyor; eksik açarsan check kırmızı olur.
 6. Move project card to `In Review`.
 7. Notify `@tester` with the PR number.
 

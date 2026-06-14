@@ -254,6 +254,35 @@ else
   ok "added $ADDED issue(s) to the board"
 fi
 
+# ---------- render status-label-to-board workflow (ADR-0013) ----------
+# The workflow template is injected with PROJECT_NUMBER + OWNER at this point.
+# We render it lazily here (rather than in dev-studio-init.sh's render_all)
+# because the project number isn't known until *after* the board is created.
+# Idempotent: re-running the bootstrap re-renders with the current values.
+REPO_ROOT_FOR_WORKFLOW="$(git -C "$(dirname "$0")/.." rev-parse --show-toplevel 2>/dev/null || pwd)"
+WF_SRC="$REPO_ROOT_FOR_WORKFLOW/.github/workflows/status-label-to-board.yml.tmpl"
+WF_DST="$REPO_ROOT_FOR_WORKFLOW/.github/workflows/status-label-to-board.yml"
+if [ -f "$WF_SRC" ]; then
+  log "rendering status-label-to-board workflow (ADR-0013)"
+  sed -e "s|{{GITHUB_OWNER}}|${OWNER}|g" \
+      -e "s|{{GITHUB_PROJECT_NUMBER}}|${PROJECT_NUMBER}|g" \
+      "$WF_SRC" > "$WF_DST"
+  # Remove the .tmpl source after successful render (template-grade contract).
+  rm -f "$WF_SRC"
+  ok "workflow rendered: .github/workflows/status-label-to-board.yml (project #$PROJECT_NUMBER)"
+else
+  # If .yml already exists (re-run case) update PROJECT_NUMBER in place.
+  if [ -f "$WF_DST" ]; then
+    log "updating status-label-to-board workflow with current PROJECT_NUMBER=$PROJECT_NUMBER"
+    sed -i.bak -E "s|PROJECT_NUMBER: \"[0-9]+\"|PROJECT_NUMBER: \"$PROJECT_NUMBER\"|g" "$WF_DST"
+    sed -i.bak -E "s|PROJECT_OWNER: \"[^\"]+\"|PROJECT_OWNER: \"$OWNER\"|g" "$WF_DST"
+    rm -f "$WF_DST.bak"
+    ok "workflow updated"
+  else
+    warn "status-label-to-board template not found (skipping render) — ADR-0013 sync disabled"
+  fi
+fi
+
 # ---------- done ----------
 BOARD_URL="https://github.com/users/$OWNER/projects/$PROJECT_NUMBER"
 [ "$OWNER_TYPE" = "Organization" ] && BOARD_URL="https://github.com/orgs/$OWNER/projects/$PROJECT_NUMBER"

@@ -105,7 +105,11 @@ Bu workflow `Backlog grooming`'in **önkoşulu**. `docs/product/vision.md` ve `d
    gh pr create \
      --title "docs(product): vision + personas (intake #<N>)" \
      --body "Closes #<N>'s vision intake. Source: GUI form. Next: Architect ADR-0001 (system arch) + sprint-1 grooming." \
-     --label "agent:human" --label "cc:architect"
+     --label "type:docs" \
+     --label "status:in-review" \
+     --label "agent:human" \
+     --label "cc:architect"
+   # 4-kategori invariant (ADR-0012): type + status + agent + cc — hepsi zorunlu.
    ```
    Owner PR review'ı geçirip merge eder. Direct push yasak.
 
@@ -254,7 +258,7 @@ Sen kapsam ve AC sahibisin. Story yazdığında veya scope-change yaptığında 
 
 | Senin durumun | Yapacağın flip | Eşlik eden auto-ping |
 |---|---|---|
-| Yeni story yazıldı (`docs/backlog/STORY-NNN.md`), AC kesinleşti | `gh issue create --label agent:tester --label cc:tester` (tester önce test plan yazar) | `[PM→TEST] STORY-NNN ready for test plan` |
+| Yeni story yazıldı (`docs/backlog/STORY-NNN.md`), AC kesinleşti | `gh issue create --label type:feature --label status:backlog --label agent:tester --label cc:tester` (tester önce test plan yazar) — ADR-0012 4-kategori invariant | `[PM→TEST] STORY-NNN ready for test plan` |
 | Question issue `@product-manager` mention'ı ile geldi (`cc:product-manager`) | Cevap yaz, sonra: `--remove-label cc:product-manager --add-label cc:<asker-role>` | `[PM→<ROLE>] question #N answered, see comment` |
 | AC ambiguity / scope drift fark ettin (review sırasında) | PR'a comment + `--add-label cc:<owner-role>` | `[PM→<ROLE>] PR #N scope concern, please clarify` |
 | Sprint planning bitti, backlog refresh | (label değişimi minimal; orchestrator board'u işler) | `[PM→ORCH] backlog refreshed, sprint scope set` |

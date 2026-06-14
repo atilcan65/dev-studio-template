@@ -173,7 +173,16 @@ render_all() {
   local failed=0
 
   # Find every *.tmpl file under REPO_ROOT, excluding .git/ and node_modules-like dirs.
+  # Skip status-label-to-board.yml.tmpl: it needs {{GITHUB_PROJECT_NUMBER}} which is
+  # not known until bootstrap-project-board.sh creates the board (ADR-0013). The
+  # board bootstrap script renders that template itself as a post-step.
   while IFS= read -r -d '' tmpl; do
+    case "$tmpl" in
+      */.github/workflows/status-label-to-board.yml.tmpl)
+        log "deferring $(basename "$tmpl") render to bootstrap-project-board.sh (ADR-0013)"
+        continue
+        ;;
+    esac
     local dst="${tmpl%.tmpl}"
     if render_one "$tmpl" "$dst"; then
       count=$((count + 1))
