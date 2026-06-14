@@ -121,6 +121,84 @@ resolve_values() {
   printf '    HEARTBEAT_DIR    = %s\n\n' "$HEARTBEAT_DIR"
 }
 
+# --- Ensure PROJECT_TOKEN secret is set on the repo (ADR-0014) ------------
+#
+# The status-label-to-board.yml workflow needs a PAT with `repo` + `project`
+# scopes to mutate the Projects v2 board. Default GITHUB_TOKEN can't do this
+# (no `project` scope, no `permissions:` key to grant it).
+#
+# Flow:
+#   1. If PROJECT_TOKEN env var is set, use it directly (CI / scripted runs).
+#   2. Otherwise prompt the user interactively (read -s, no echo).
+#   3. Validate format (ghp_* classic or github_pat_* fine-grained).
+#   4. Write to repo secret via `gh secret set` (idempotent: overwrites).
+#
+# Soft-fails only on missing repo (which preflight should have caught); a
+# missing/invalid token is a hard fail — the rest of init is meaningless
+# without it because the board sync workflow will fail on first issue.
+#
+# Skip in dry-run mode (don't mutate user repo secrets during a preview).
+
+ensure_project_token() {
+  if [ "$DRY_RUN" = "1" ]; then
+    log "skipping PROJECT_TOKEN secret setup (dry-run)"
+    return 0
+  fi
+
+  # Test harnesses can opt out entirely (e2e pilots that don't exercise board sync).
+  if [ "${DEV_STUDIO_SKIP_PROJECT_TOKEN:-0}" = "1" ]; then
+    log "skipping PROJECT_TOKEN secret setup (DEV_STUDIO_SKIP_PROJECT_TOKEN=1)"
+    return 0
+  fi
+
+  log "ensuring PROJECT_TOKEN repo secret (ADR-0014)"
+
+  local token="${PROJECT_TOKEN:-}"
+  if [ -z "$token" ]; then
+    # Interactive prompt. -s suppresses echo so the token never lands in the
+    # terminal scrollback or any session-capture logs.
+    printf '\n%sPROJECT_TOKEN required for Projects v2 board sync (ADR-0014).%s\n' "$C_BOLD" "$C_RESET"
+    printf '  Create at: https://github.com/settings/tokens (classic)\n'
+    printf '  Required scopes: %srepo%s + %sproject%s\n' "$C_BOLD" "$C_RESET" "$C_BOLD" "$C_RESET"
+    printf '  Tip: export PROJECT_TOKEN=ghp_... before re-running to skip this prompt.\n\n'
+    printf 'Paste PROJECT_TOKEN (hidden): '
+    # Read with no echo. </dev/tty so this works even if stdin is piped.
+    if [ -r /dev/tty ]; then
+      IFS= read -rs token </dev/tty || true
+    else
+      IFS= read -rs token || true
+    fi
+    printf '\n'
+  fi
+
+  if [ -z "$token" ]; then
+    fail "PROJECT_TOKEN is empty. Set it via env var or paste at the prompt. See ADR-0014."
+  fi
+
+  # Format validation: classic PATs start ghp_, fine-grained start github_pat_.
+  # We recommend classic (template-grade reuse) but accept fine-grained for
+  # forward compatibility. Anything else is likely a paste error.
+  case "$token" in
+    ghp_*|github_pat_*) : ;;
+    *)
+      fail "PROJECT_TOKEN format unrecognised (expected ghp_* or github_pat_*). Aborting before secret write."
+      ;;
+  esac
+
+  # Write the secret. `gh secret set --body -` reads from stdin so the token
+  # never appears in process args (visible via ps).
+  if printf '%s' "$token" | gh secret set PROJECT_TOKEN \
+       --body - \
+       --repo "$GITHUB_OWNER/$GITHUB_REPO" >/dev/null 2>&1; then
+    ok "PROJECT_TOKEN secret written to $GITHUB_OWNER/$GITHUB_REPO"
+  else
+    fail "failed to write PROJECT_TOKEN secret. Check gh auth status and repo permissions."
+  fi
+
+  # Clear token from local shell var (defense-in-depth; env var still exists).
+  unset token
+}
+
 # --- Render a single .tmpl file -------------------------------------------
 #
 # render_one <source.tmpl> <destination>
@@ -334,6 +412,7 @@ install_systemd_watchers() {
 main() {
   preflight
   resolve_values
+  ensure_project_token
   render_all
   verify
   bootstrap_board

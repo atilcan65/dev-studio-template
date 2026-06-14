@@ -1,9 +1,17 @@
 # ADR-0013 — Sync `status:*` Labels to Projects v2 Board Status Field
 
-**Status:** Accepted
+**Status:** Accepted (auth section superseded by ADR-0014)
 **Date:** 2026-06-14
 **Supersedes:** —
-**Related:** ADR-0007 (Label Cleanup), ADR-0012 (Required Label Set)
+**Related:** ADR-0007 (Label Cleanup), ADR-0012 (Required Label Set), ADR-0014 (PROJECT_TOKEN secret)
+
+> **Note (2026-06-14):** The original auth design used `secrets.GITHUB_TOKEN`,
+> which was empirically proven insufficient — default workflow tokens cannot
+> mutate ProjectsV2 (NOT_FOUND on the `projectV2(number:)` query). The auth
+> mechanism was replaced by **ADR-0014** which provisions a `PROJECT_TOKEN`
+> classic PAT (scopes `repo` + `project`) as a repo secret during init. The
+> rest of this ADR — the label-to-option mapping, selection rule, and workflow
+> structure — remains accurate.
 
 ---
 

@@ -249,6 +249,8 @@ Karşıtı: PR açıp "sonradan eklerim" demek yok. İlk `gh pr create` komutund
 
 `.github/workflows/status-label-to-board.yml` her `status:*` label değişimini Projects v2 Status field'ına mirror eder (ADR-0013). Yani sen `status:in-progress` label'ını koyunca board card'ı da "In Progress" lane'ine geçer; manuel sürükleme gerekmez.
 
+**Auth note (ADR-0014):** Bu workflow `secrets.PROJECT_TOKEN`'a ihtiyaç duyar (classic PAT, scope: `repo` + `project`). Default `GITHUB_TOKEN` ProjectsV2 mutate edemez (NOT_FOUND döner). `dev-studio-init.sh` ilk bootstrap'ta PAT'i otomatik ister ve `gh secret set` ile repo'ya yazar; ikinci projeden itibaren `export PROJECT_TOKEN=ghp_...` yeterli.
+
 ### Anti-patterns (yapma)
 
 - ❌ "Label'ı sonra orchestrator koyar" diye eksik açmak — orchestrator board hygiene'ı takip etmez, soul kontratını sen ihlal ediyorsun.

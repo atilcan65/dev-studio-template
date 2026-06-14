@@ -15,11 +15,17 @@ name: Status Label → Board Sync (ADR-0013)
 # Selection rule when multiple `status:*` labels are present: pick the
 # most-advanced (done > in-review > in-progress > blocked > ready > backlog).
 #
-# Auth: uses default GITHUB_TOKEN, which is sufficient for repo-owned user
-# projects. For org projects you may need to swap in a fine-grained PAT.
+# Auth: uses repo secret PROJECT_TOKEN (a classic PAT with `repo` + `project`
+# scopes). The default GITHUB_TOKEN cannot mutate ProjectsV2 fields even for
+# user-owned projects — it lacks `project` scope and there is no `permissions:`
+# key to grant it. See ADR-0014 for the full rationale.
 #
-# See docs/decisions/ADR-0013-status-label-to-board-sync.md for the full
-# rationale and trade-offs.
+# The secret is provisioned automatically by scripts/dev-studio-init.sh on
+# every new project bootstrap, so this workflow is template-grade with no
+# manual GitHub UI steps.
+#
+# See docs/decisions/ADR-0013-status-label-to-board-sync.md (superseded auth
+# section) and docs/decisions/ADR-0014-project-token-secret.md.
 
 on:
   issues:
@@ -43,11 +49,13 @@ jobs:
           PROJECT_NUMBER: "{{GITHUB_PROJECT_NUMBER}}"
           STATUS_FIELD_NAME: "Status"
         with:
-          # Token note: the default GITHUB_TOKEN works for user-owned projects
-          # where the workflow runs in a repo owned by the same user. If you
-          # move the project to an org or another user, replace this with a
-          # PAT secret that has `project` scope.
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+          # PROJECT_TOKEN: classic PAT with `repo` + `project` scopes.
+          # Provisioned by dev-studio-init.sh — see ADR-0014.
+          # Falls back to GITHUB_TOKEN only so the workflow file is still
+          # syntactically valid before init runs; the GraphQL call will fail
+          # loudly with NOT_FOUND if PROJECT_TOKEN is missing, surfacing the
+          # misconfiguration in Actions logs rather than silently no-op'ing.
+          github-token: ${{ secrets.PROJECT_TOKEN || secrets.GITHUB_TOKEN }}
           script: |
             const owner = process.env.PROJECT_OWNER;
             const projectNumber = parseInt(process.env.PROJECT_NUMBER, 10);

@@ -39,12 +39,37 @@ See [`.claude/CLAUDE.md`](.claude/CLAUDE.md) for the full project context, file-
 When this repo is created from the template (via "Use this template" or
 `gh repo create --template atilcan65/dev-studio-template`), do this once:
 
+### Prerequisite: PROJECT_TOKEN PAT (one-time per machine)
+
+The board-sync workflow (ADR-0013) needs a classic PAT with `repo` +
+`project` scopes — default `GITHUB_TOKEN` cannot mutate ProjectsV2.
+See **ADR-0014** for the full rationale.
+
+1. Open <https://github.com/settings/tokens> → "Generate new token
+   (classic)".
+2. Name it `dev-studio PROJECT_TOKEN`, expiration 90 days (or your
+   policy).
+3. Tick the **`repo`** and **`project`** scope boxes.
+4. Copy the `ghp_...` value.
+5. Add to your shell rc (so every new project picks it up automatically):
+   ```bash
+   export PROJECT_TOKEN=ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+   ```
+6. `source ~/.bashrc` (or open a new shell).
+
+The **same PAT is reused across every project** — that's the point of
+using a classic (not fine-grained) PAT. If you forget the `export`,
+`dev-studio-init.sh` will prompt you (hidden input) on first run.
+
+### Bootstrap
+
 ```bash
 # 1. clone & enter
 git clone https://github.com/{{GITHUB_OWNER}}/{{GITHUB_REPO}}.git
 cd {{GITHUB_REPO}}
 
-# 2. render all .tmpl files with values pulled from `gh` and `git`
+# 2. render all .tmpl files with values pulled from `gh` and `git`,
+#    and write PROJECT_TOKEN to the repo secret (ADR-0014)
 bash scripts/dev-studio-init.sh
 
 # 3. start the multi-agent watcher
