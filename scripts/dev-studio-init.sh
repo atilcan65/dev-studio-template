@@ -239,6 +239,44 @@ summary() {
   printf '  3) Open a GitHub issue with label "agent:pm" to feed your vision\n\n'
 }
 
+# --- Project board bootstrap ---------------------------------------------
+# Provisions the GitHub Projects v2 board (5 columns) and adds every existing
+# issue to it. Soft-fails (does not abort init) if the gh token lacks the
+# 'project' scope — board can be added later by running the script directly.
+bootstrap_board() {
+  [ "$DRY_RUN" = "1" ] && { log "skipping board bootstrap (dry-run)"; return 0; }
+
+  # Test harnesses (e.g. e2e-pilot.sh) can opt out by setting
+  # DEV_STUDIO_SKIP_BOARD=1 to avoid creating Projects v2 boards under the
+  # pilot's user account and exhausting the 'project' scope on every run.
+  if [ "${DEV_STUDIO_SKIP_BOARD:-0}" = "1" ]; then
+    log "skipping board bootstrap (DEV_STUDIO_SKIP_BOARD=1)"
+    return 0
+  fi
+
+  local script="$REPO_ROOT/scripts/bootstrap-project-board.sh"
+  if [ ! -x "$script" ]; then
+    warn "bootstrap-project-board.sh not found or not executable — skipping"
+    return 0
+  fi
+
+  log "provisioning project board"
+  # Use the env-resolved repo so this works regardless of cwd.
+  if "$script" "$GITHUB_OWNER/$GITHUB_REPO"; then
+    ok "project board ready"
+  else
+    local rc=$?
+    if [ "$rc" -eq 3 ]; then
+      # Soft-skip: missing 'project' scope. Surface guidance but continue.
+      warn "board bootstrap skipped (gh token lacks 'project' scope)"
+      warn "Run later: gh auth refresh -s project,read:project && scripts/bootstrap-project-board.sh"
+    else
+      warn "board bootstrap failed (exit $rc) — continuing init"
+      warn "Re-run manually: scripts/bootstrap-project-board.sh"
+    fi
+  fi
+}
+
 # --- Main -----------------------------------------------------------------
 
 main() {
@@ -246,6 +284,7 @@ main() {
   resolve_values
   render_all
   verify
+  bootstrap_board
   summary
 }
 

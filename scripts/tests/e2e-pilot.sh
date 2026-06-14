@@ -129,6 +129,7 @@ EXPECTED_FILES=(
     "TEMPLATE-README.md"
     "scripts/dev-studio-init.sh"
     "scripts/bootstrap-labels.sh"
+    "scripts/bootstrap-project-board.sh"
     "scripts/agent-watch.sh"
     "scripts/notify.sh"
     "scripts/tests/faz5-smoke.sh"
@@ -173,6 +174,11 @@ export REPO_ROOT="$WORK_DIR/$PILOT_REPO_NAME"
 export GITHUB_REPO="$PILOT_REPO_NAME"
 export HUMAN_OWNER_NAME="atil"
 # GITHUB_OWNER zaten set
+
+# Init script bir Projects v2 board kurar ve pilot repo'ya issue'larını ekler.
+# Pilot repo her testte yeni isimle yaratılıyor; her seferinde yeni board
+# yaratmak istemiyoruz (cleanup yapsak bile gereksiz API çağrısı). Skip.
+export DEV_STUDIO_SKIP_BOARD=1
 
 # Init script interactive olabilir — env vars set, stdin'i /dev/null'a yönlendir.
 # Bu sayede `read` çağrıları boş döner, init env default'larını kullanır.

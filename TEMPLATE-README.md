@@ -53,7 +53,34 @@ bash scripts/bootstrap-labels.sh
 
 ~35 label oluşturur: `agent:*`, `cc:*`, `status:*`, `type:*`, `priority:*`, `sprint:*`, meta.
 
-### 4. Agent watcher'larını başlat
+### 4. Project board oluştur
+
+```bash
+bash scripts/bootstrap-project-board.sh
+```
+
+GitHub Projects v2 board kurar:
+- 5 kolon: **Backlog → Ready → In Progress → In Review → Done**
+- Board'u repo'ya bağlar (repo'nun Projects sekmesinde görünür)
+- Mevcut tüm issue'ları board'a ekler (default: Backlog)
+
+> **gh token gereksinimi:** `project` ve `read:project` scope'ları. Eksikse:
+> ```bash
+> gh auth refresh -s project,read:project
+> ```
+> Script idempotent: yeniden çalıştırmak güvenli.
+
+> **⚠️ Bir kerelik manuel adım (GitHub API kısıtlaması, ~30 sn):**
+> Projects v2 workflow toggle'ları için API yok (community discussion #194509). Board oluştuktan sonra GUI'den:
+> 1. Board’u aç (script ekrana URL yazar)
+> 2. Sağ üst **⋯ → Workflows**
+> 3. **"Auto-add to project"** → Enable, target repository = bu repo
+> 4. **"Item closed"** → Enable, Set status: **Done**
+> 5. (Opsiyonel) **"Pull request merged"** → Enable, Set status: **Done**
+>
+> Bu toggle'lar bir kez kurulduktan sonra: yeni issue/PR otomatik Backlog'a düşer, kapandığında Done'a kayar.
+
+### 5. Agent watcher'larını başlat
 
 ```bash
 bash scripts/dev-studio-start.sh start
@@ -61,7 +88,7 @@ bash scripts/dev-studio-start.sh start
 
 5 Claude Code instance ayağa kalkar, her biri kendi `agent:<role>` label'lı issue/PR'ları izler.
 
-### 5. (Opsiyonel) systemd watcher'larını kur
+### 6. (Opsiyonel) systemd watcher'larını kur
 
 ```bash
 bash scripts/install/dev-studio-install-systemd.sh
