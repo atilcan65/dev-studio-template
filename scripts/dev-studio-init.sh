@@ -195,6 +195,40 @@ ensure_project_token() {
     fail "failed to write PROJECT_TOKEN secret. Check gh auth status and repo permissions."
   fi
 
+  # --- Live health-check (ADR-0014 §3.4) ----------------------------------
+  # The secret was accepted by GitHub's secrets API, but that only validates
+  # storage — not that the token itself is alive, unrevoked, or scoped
+  # correctly. A workflow that uses a dead PROJECT_TOKEN will fail with
+  # "Bad credentials" (HTTP 401) at the GraphQL ProjectV2 mutation, which
+  # surfaces as a board-sync failure on the very first Vision issue. We
+  # caught this once and lost 30 minutes debugging. Verify here, fast-fail
+  # early with a precise error before any other init work proceeds.
+  log "verifying PROJECT_TOKEN with live GitHub API ping"
+  local http_code
+  http_code="$(curl -fsS -o /dev/null -w '%{http_code}' \
+    --max-time 10 \
+    -H "Authorization: Bearer $token" \
+    -H "Accept: application/vnd.github+json" \
+    https://api.github.com/user 2>/dev/null || echo "000")"
+
+  case "$http_code" in
+    200)
+      ok "PROJECT_TOKEN live auth check passed (HTTP 200)"
+      ;;
+    401)
+      fail "PROJECT_TOKEN rejected by GitHub (HTTP 401 Bad credentials). Token may be revoked, expired, or malformed. Generate a fresh classic PAT with repo+project scopes and re-run. See ADR-0014 §3.4."
+      ;;
+    403)
+      fail "PROJECT_TOKEN authenticated but lacks scope (HTTP 403). Ensure the classic PAT has at minimum 'repo' and 'project' scopes. See ADR-0014 §3.1."
+      ;;
+    000)
+      fail "PROJECT_TOKEN health check could not reach GitHub (network error or timeout). Check connectivity to api.github.com."
+      ;;
+    *)
+      fail "PROJECT_TOKEN health check returned unexpected HTTP $http_code. Inspect token and re-run. See ADR-0014 §3.4."
+      ;;
+  esac
+
   # Clear token from local shell var (defense-in-depth; env var still exists).
   unset token
 }
