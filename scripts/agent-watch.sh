@@ -139,9 +139,6 @@ POLL_INTERVAL="${POLL_INTERVAL:-60}"
 #                                            brief restart.
 PR_MERGED_BACKFILL="${PR_MERGED_BACKFILL:-1 hour ago}"
 PR_LABELED_BACKFILL="${PR_LABELED_BACKFILL:-60 seconds ago}"
-# ADR-0017: issue-opened HWM backfill. Default 5 min covers the gap between
-# `new-project.sh` returning and the first watcher poll firing on a fresh repo.
-ISSUE_OPENED_BACKFILL="${ISSUE_OPENED_BACKFILL:-5 minutes ago}"
 
 # init_pr_merged_hwm — read PR_MERGED_LAST_SEEN with first-run backfill.
 # Idempotent. Sets the global var; called from poll_once.
@@ -173,24 +170,6 @@ init_pr_labeled_hwm() {
         || date -u '+%Y-%m-%dT%H:%M:%SZ')"
     fi
     "$STATE_HELPER" set "$ROLE" pr_labeled_last_seen_utc "$PR_LABELED_LAST_SEEN"
-  fi
-}
-
-# init_issue_opened_hwm (ADR-0017) — read ISSUE_OPENED_LAST_SEEN with first-run
-# backfill. Idempotent. Sets the global var; called from poll_once.
-# Separate HWM (not shared with last_seen_utc) so a stale last_seen_utc race
-# cannot eat freshly-created issues bound for `agent:<role>` (root cause of
-# AtilCalculator Round 6 Sprint-1 kickoff Issue #3 silent drop).
-init_issue_opened_hwm() {
-  ISSUE_OPENED_LAST_SEEN="$("$STATE_HELPER" get "$ROLE" issue_opened_last_seen_utc)"
-  if [ -z "$ISSUE_OPENED_LAST_SEEN" ] || [ "$ISSUE_OPENED_LAST_SEEN" = "null" ]; then
-    ISSUE_OPENED_LAST_SEEN="$(date -u -d "$ISSUE_OPENED_BACKFILL" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null)"
-    if [ -z "$ISSUE_OPENED_LAST_SEEN" ]; then
-      # BSD fallback (macOS): 5 minutes ago.
-      ISSUE_OPENED_LAST_SEEN="$(date -u -v-5M '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null \
-        || date -u '+%Y-%m-%dT%H:%M:%SZ')"
-    fi
-    "$STATE_HELPER" set "$ROLE" issue_opened_last_seen_utc "$ISSUE_OPENED_LAST_SEEN"
   fi
 }
 
@@ -368,43 +347,6 @@ query_assigned_issues() {
              url: .url,
              updated_at: .updatedAt,
              context: { labels: [.labels[].name] }
-           } ]"
-}
-
-# query_issue_opened (ADR-0017) — emit `issue-opened-<n>-<createdAt>` events for
-# issues with `agent:<role>` whose `createdAt > ISSUE_OPENED_LAST_SEEN`.
-#
-# Why a separate query instead of relaxing query_assigned_issues:
-#   - query_assigned_issues uses `updatedAt > LAST_SEEN`, where LAST_SEEN is the
-#     shared `last_seen_utc` bumped on every poll. If a freshly-created issue's
-#     createdAt < LAST_SEEN (which can happen when another event bumps LAST_SEEN
-#     past the new issue's timestamp, e.g. a race during the same poll cycle),
-#     the issue is silently dropped forever. AtilCalculator Round 6 Sprint-1
-#     Issue #3 was the canonical case.
-#   - This query uses `createdAt > ISSUE_OPENED_LAST_SEEN`, an independent HWM
-#     that ONLY advances when an issue-opened event is materialized. createdAt
-#     is immutable, so it never "moves" out from under the comparison.
-#   - Event ID `issue-opened-<n>-<createdAt>` is unique per issue (createdAt is
-#     write-once), so processed_event_ids dedup prevents re-fire across polls.
-#
-# HWM advance: the watcher writes ISSUE_OPENED_LAST_SEEN = now after every
-# poll (see poll_once tail). This caps the backfill window on subsequent polls.
-query_issue_opened() {
-  gh issue list \
-    --repo "$REPO" \
-    --label "agent:${ROLE}" \
-    --state open \
-    --limit 50 \
-    --json number,title,url,createdAt,updatedAt,labels \
-    --jq "[ .[] | select(.createdAt > \"$ISSUE_OPENED_LAST_SEEN\") |
-           {
-             id: (\"issue-opened-\" + (.number | tostring) + \"-\" + .createdAt),
-             kind: \"issue_opened\",
-             number: .number,
-             title: .title,
-             url: .url,
-             updated_at: .updatedAt,
-             context: { created_at: .createdAt, labels: [.labels[].name] }
            } ]"
 }
 
@@ -781,9 +723,8 @@ poll_once() {
   LAST_SEEN="$("$STATE_HELPER" get "$ROLE" last_seen_utc)"
   init_pr_merged_hwm
   init_pr_labeled_hwm
-  init_issue_opened_hwm  # ADR-0017
 
-  local assigned reviews commits mentions stale board pr_merged pr_labeled issue_opened
+  local assigned reviews commits mentions stale board pr_merged pr_labeled
   assigned="$(query_assigned_issues || echo '[]')"
   reviews="$(query_review_requests || echo '[]')"
   commits="$(query_new_commits_on_assigned_prs || echo '[]')"
@@ -792,14 +733,13 @@ poll_once() {
   board="$(query_board_changes || echo '[]')"
   pr_merged="$(query_pr_merged 2>/dev/null || echo '[]')"
   pr_labeled="$(query_pr_labeled 2>/dev/null || echo '[]')"
-  issue_opened="$(query_issue_opened 2>/dev/null || echo '[]')"  # ADR-0017
 
   # Merge and dedupe
   local merged
   merged="$(jq -s 'add | unique_by(.id)' \
     <(echo "$assigned") <(echo "$reviews") <(echo "$commits") \
     <(echo "$mentions") <(echo "$stale") <(echo "$board") \
-    <(echo "$pr_merged") <(echo "$pr_labeled") <(echo "$issue_opened"))"
+    <(echo "$pr_merged") <(echo "$pr_labeled"))"
 
   # Filter out events already in processed_event_ids
   local state_file new_events
@@ -825,13 +765,6 @@ poll_once() {
 
   # Bump last_seen
   "$STATE_HELPER" set "$ROLE" last_seen_utc "$now"
-
-  # ADR-0017: bump issue_opened HWM to `now` every poll. Same pattern as
-  # last_seen_utc — caps backfill window so we don't re-emit historical issues
-  # if the state file ever loses processed_event_ids (e.g. trim regression).
-  # Independent from last_seen_utc so the cross-event race that caused
-  # AtilCalculator Round 6 Issue #3 silent drop cannot recur.
-  "$STATE_HELPER" set "$ROLE" issue_opened_last_seen_utc "$now"
 
   # v3.1.1 (ADR-0008): HWM bump now lives inside query_pr_merged because the
   # subshell `$(query_pr_merged)` capture above drops any globals set by the

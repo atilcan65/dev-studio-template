@@ -12,7 +12,6 @@
 #     "burst_until_utc": null,
 #     "pr_merged_last_seen_utc": null,    # v3: high-water mark for PR merged events
 #     "pr_labeled_last_seen_utc": null,   # v3: high-water mark for PR labeled events
-#     "issue_opened_last_seen_utc": null, # v3.1 (ADR-0017): HWM for issue-opened events
 #     "polled_at_utc": null               # v3: timestamp of most recent poll (set by watcher each cycle)
 #   }
 #
@@ -102,7 +101,6 @@ cmd_init() {
          burst_until_utc: null,
          pr_merged_last_seen_utc: null,
          pr_labeled_last_seen_utc: null,
-         issue_opened_last_seen_utc: null,
          polled_at_utc: null
        }' > "$file"
     echo "Initialised state: $file"
@@ -126,10 +124,6 @@ cmd_init() {
     fi
     if ! jq -e 'has("polled_at_utc")' "$file" >/dev/null 2>&1; then
       jq_inplace "$file" '.polled_at_utc = null'
-    fi
-    # v3 → v3.1 (ADR-0017) backfill: issue_opened_last_seen_utc.
-    if ! jq -e 'has("issue_opened_last_seen_utc")' "$file" >/dev/null 2>&1; then
-      jq_inplace "$file" '.issue_opened_last_seen_utc = null'
     fi
     echo "State already exists: $file"
   fi
