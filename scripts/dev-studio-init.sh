@@ -175,6 +175,24 @@ ensure_project_token() {
     fail "PROJECT_TOKEN is empty. Set it via env var or paste at the prompt. See ADR-0014."
   fi
 
+  # --- Paste-corruption guard (ADR-0014 §3.5) -----------------------------
+  # Pasted tokens frequently arrive with invisible trailing whitespace, CR
+  # bytes (Windows clipboard), or a UTF-8 BOM (some terminal emulators).
+  # `gh secret set --body -` stores ALL of these bytes verbatim. The local
+  # health-check (next block) ping uses the same in-memory $token so it
+  # passes; but the workflow runner reads the secret raw and the resulting
+  # Authorization header is malformed -> HTTP 401 Bad credentials on first
+  # board sync. Strip the known-bad bytes here BEFORE write.
+  # Strip UTF-8 BOM if present at start.
+  token="${token#$'\xef\xbb\xbf'}"
+  # Strip all CR bytes.
+  token="${token//$'\r'/}"
+  # Strip all newline bytes (paste from multi-line clipboard).
+  token="${token//$'\n'/}"
+  # Strip leading/trailing ASCII whitespace.
+  token="${token#"${token%%[![:space:]]*}"}"
+  token="${token%"${token##*[![:space:]]}"}"
+
   # Format validation: classic PATs start ghp_, fine-grained start github_pat_.
   # We recommend classic (template-grade reuse) but accept fine-grained for
   # forward compatibility. Anything else is likely a paste error.
@@ -231,6 +249,111 @@ ensure_project_token() {
 
   # Clear token from local shell var (defense-in-depth; env var still exists).
   unset token
+}
+
+# --- Canary workflow: prove the secret reaches the runner intact (ADR-0014 §3.5)
+#
+# The local health-check above only validates $token in this shell. It does
+# NOT prove that the bytes stored in `secrets.PROJECT_TOKEN` will be readable
+# by a workflow runner. We caught a case where a corrupted secret (trailing
+# whitespace from clipboard) passed local validation but failed every
+# subsequent board-sync workflow with HTTP 401.
+#
+# Solution: trigger .github/workflows/secret-canary.yml via workflow_dispatch
+# immediately after `gh secret set` succeeds. Poll for completion (max 90s).
+# Abort init if the canary does not finish with conclusion=success.
+#
+# This is the *only* deterministic way to validate the secret end-to-end
+# without exposing the token value (GitHub does not allow reading secrets).
+
+run_secret_canary() {
+  if [ "$DRY_RUN" = "1" ]; then
+    log "skipping PROJECT_TOKEN canary (dry-run)"
+    return 0
+  fi
+  if [ "${DEV_STUDIO_SKIP_PROJECT_TOKEN:-0}" = "1" ]; then
+    log "skipping PROJECT_TOKEN canary (DEV_STUDIO_SKIP_PROJECT_TOKEN=1)"
+    return 0
+  fi
+
+  log "triggering PROJECT_TOKEN canary workflow (ADR-0014 §3.5)"
+
+  local bootstrap_id
+  bootstrap_id="bootstrap-$(date -u +%Y%m%dT%H%M%SZ)-$$"
+
+  # Capture run-creation timestamp BEFORE dispatch so we can locate the new run
+  # without ambiguity (multiple canary runs over a project's lifetime).
+  local dispatch_started_at
+  dispatch_started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+  if ! gh workflow run secret-canary.yml \
+        --repo "$GITHUB_OWNER/$GITHUB_REPO" \
+        --ref main \
+        -f "bootstrap_id=$bootstrap_id" >/dev/null 2>&1; then
+    fail "failed to dispatch PROJECT_TOKEN canary workflow. Check that .github/workflows/secret-canary.yml was committed and pushed. See ADR-0014 §3.5."
+  fi
+
+  log "waiting for canary run to appear (bootstrap_id=$bootstrap_id)"
+
+  # Poll for the new run_id. GitHub may take a few seconds to register the
+  # dispatch. Max wait: 30s for the run to appear.
+  local run_id=""
+  local attempts=0
+  while [ $attempts -lt 15 ]; do
+    run_id="$(gh run list \
+      --repo "$GITHUB_OWNER/$GITHUB_REPO" \
+      --workflow=secret-canary.yml \
+      --created ">=$dispatch_started_at" \
+      --limit 1 \
+      --json databaseId \
+      --jq '.[0].databaseId // empty' 2>/dev/null || echo "")"
+    if [ -n "$run_id" ]; then
+      break
+    fi
+    sleep 2
+    attempts=$((attempts + 1))
+  done
+
+  if [ -z "$run_id" ]; then
+    fail "canary workflow did not start within 30s after dispatch. Check Actions tab for $GITHUB_OWNER/$GITHUB_REPO. See ADR-0014 §3.5."
+  fi
+
+  log "canary run started: id=$run_id (watching, max 90s)"
+
+  # `gh run watch` blocks until the run finishes, then exits 0 on success or
+  # nonzero on failure. We wrap with timeout to bound total wall time.
+  local watch_exit=0
+  if ! timeout 90 gh run watch "$run_id" \
+        --repo "$GITHUB_OWNER/$GITHUB_REPO" \
+        --exit-status \
+        --interval 3 >/dev/null 2>&1; then
+    watch_exit=$?
+  fi
+
+  # Resolve final conclusion regardless of watch_exit (timeout or genuine fail).
+  local conclusion
+  conclusion="$(gh run view "$run_id" \
+    --repo "$GITHUB_OWNER/$GITHUB_REPO" \
+    --json conclusion \
+    --jq '.conclusion // "in_progress"' 2>/dev/null || echo "unknown")"
+
+  case "$conclusion" in
+    success)
+      ok "PROJECT_TOKEN canary PASSED (run $run_id) — secret intact end-to-end"
+      ;;
+    failure|startup_failure|action_required)
+      printf '\n'
+      printf '  Canary run URL: %s/actions/runs/%s\n' \
+        "https://github.com/$GITHUB_OWNER/$GITHUB_REPO" "$run_id"
+      fail "PROJECT_TOKEN canary FAILED (conclusion=$conclusion). The secret stored in the repo is corrupted, revoked, or lacks scope. Re-run init and re-paste the token; if it keeps failing, generate a fresh classic PAT. See ADR-0014 §3.5."
+      ;;
+    in_progress|queued|"")
+      fail "PROJECT_TOKEN canary did not finish within 90s (run $run_id). Investigate manually at https://github.com/$GITHUB_OWNER/$GITHUB_REPO/actions/runs/$run_id. See ADR-0014 §3.5."
+      ;;
+    *)
+      fail "PROJECT_TOKEN canary returned unexpected conclusion=$conclusion (run $run_id). See ADR-0014 §3.5."
+      ;;
+  esac
 }
 
 # --- Render a single .tmpl file -------------------------------------------
@@ -451,6 +574,12 @@ main() {
   verify
   bootstrap_board
   install_systemd_watchers
+  # Canary runs LAST so the secret-canary.yml workflow has been rendered
+  # and (assumed) pushed by the launcher. If the launcher has not pushed
+  # yet, the canary dispatch will fail fast with a clear message instead
+  # of producing silent workflow failures on first Vision issue.
+  # See ADR-0014 §3.5.
+  run_secret_canary
   summary
 }
 
