@@ -156,8 +156,13 @@ Two-layer fix:
    validation (`ghp_*` / `github_pat_*`) catches anything left over.
 
 2. **End-to-end canary workflow** (deterministic). A new workflow
-   `.github/workflows/secret-canary.yml` runs on `workflow_dispatch`. It
-   reads `${{ secrets.PROJECT_TOKEN }}` on the runner and:
+   `.github/workflows/secret-canary.yml` runs on `workflow_dispatch`. **It
+   ships as a static `.yml` (not `.tmpl`)** so it travels with the
+   launcher's initial commit + push and is guaranteed present on remote
+   before `dev-studio-init.sh` runs. It does not reference any
+   `{{PLACEHOLDER}}` values — owner/repo are resolved at runtime from the
+   workflow's own GitHub Actions context. It reads `${{ secrets.PROJECT_TOKEN }}`
+   on the runner and:
    - asserts non-empty and length >= 30
    - pings `api.github.com/user` (must return HTTP 200)
    - runs a minimal GraphQL query against `viewer.projectsV2` (must not

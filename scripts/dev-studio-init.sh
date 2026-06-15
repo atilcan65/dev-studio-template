@@ -290,7 +290,7 @@ run_secret_canary() {
         --repo "$GITHUB_OWNER/$GITHUB_REPO" \
         --ref main \
         -f "bootstrap_id=$bootstrap_id" >/dev/null 2>&1; then
-    fail "failed to dispatch PROJECT_TOKEN canary workflow. Check that .github/workflows/secret-canary.yml was committed and pushed. See ADR-0014 §3.5."
+    fail "failed to dispatch PROJECT_TOKEN canary workflow. Verify .github/workflows/secret-canary.yml exists on origin/main (it ships static, no render). Check: gh api repos/$GITHUB_OWNER/$GITHUB_REPO/contents/.github/workflows/secret-canary.yml. See ADR-0014 §3.5."
   fi
 
   log "waiting for canary run to appear (bootstrap_id=$bootstrap_id)"
@@ -574,11 +574,12 @@ main() {
   verify
   bootstrap_board
   install_systemd_watchers
-  # Canary runs LAST so the secret-canary.yml workflow has been rendered
-  # and (assumed) pushed by the launcher. If the launcher has not pushed
-  # yet, the canary dispatch will fail fast with a clear message instead
-  # of producing silent workflow failures on first Vision issue.
-  # See ADR-0014 §3.5.
+  # Canary runs LAST. secret-canary.yml ships as a static .yml in the template
+  # (not a .tmpl) so it lands on remote via the launcher's initial push BEFORE
+  # init runs. By the time we dispatch here, the workflow file is guaranteed
+  # present on origin/main. If it isn't (e.g. corrupted clone), dispatch fails
+  # fast with a clear message instead of producing silent workflow failures on
+  # first Vision issue. See ADR-0014 §3.5.
   run_secret_canary
   summary
 }
