@@ -1,8 +1,16 @@
 name: Status Label → Board Sync (ADR-0013)
 
-# Mirrors `status:*` label changes on issues and PRs onto the Projects v2
+# Mirrors `status:*` label changes on **issues** onto the Projects v2
 # board's "Status" field. The board is owned by {{GITHUB_OWNER}} as project
 # number {{GITHUB_PROJECT_NUMBER}}.
+#
+# Scope (ADR-0016): Issues-only. Pull requests are tracked via their linked
+# issue; they do not appear as board cards. Rationale:
+#   1. Issues represent work items; PRs are the tool to deliver them.
+#   2. `pull_request_target: labeled` does NOT fire on a merged (closed) PR,
+#      so any `status:done` set post-merge would silently fail to sync.
+#   3. Avoids duplicate cards (one per issue + one per PR) on the board.
+# See docs/decisions/ADR-0016-issues-only-board.md for the full rationale.
 #
 # Label → field-option mapping (see ADR-0013):
 #   status:backlog      → Backlog
@@ -25,17 +33,15 @@ name: Status Label → Board Sync (ADR-0013)
 # manual GitHub UI steps.
 #
 # See docs/decisions/ADR-0013-status-label-to-board-sync.md (superseded auth
-# section) and docs/decisions/ADR-0014-project-token-secret.md.
+# section), ADR-0014-project-token-secret.md, and
+# ADR-0016-issues-only-board.md (scope).
 
 on:
   issues:
     types: [labeled, unlabeled]
-  pull_request_target:
-    types: [labeled, unlabeled]
 
 permissions:
   issues: read
-  pull-requests: read
   repository-projects: write
 
 jobs:
@@ -66,8 +72,14 @@ jobs:
               return;
             }
 
-            const isPR = !!context.payload.pull_request;
-            const target = isPR ? context.payload.pull_request : context.payload.issue;
+            // ADR-0016: Issues-only board. The `on:` block above already
+            // restricts triggers to issue events; this is a defensive guard
+            // in case the workflow is ever invoked from another context.
+            if (!context.payload.issue) {
+              core.info('Not an issue event; nothing to sync (ADR-0016 issues-only board).');
+              return;
+            }
+            const target = context.payload.issue;
             const number = target.number;
             const nodeId = target.node_id;
             const labels = (target.labels || []).map(l => (typeof l === 'string' ? l : l.name));
@@ -84,7 +96,7 @@ jobs:
 
             const match = order.find(o => labels.includes(o.label));
             if (!match) {
-              core.info(`No status:* label on ${isPR ? 'PR' : 'issue'} #${number}; leaving board field untouched.`);
+              core.info(`No status:* label on issue #${number}; leaving board field untouched.`);
               return;
             }
             core.info(`Selected status label: ${match.label} → board option "${match.option}"`);

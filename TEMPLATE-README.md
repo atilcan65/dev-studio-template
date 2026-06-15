@@ -71,14 +71,16 @@ GitHub Projects v2 board kurar:
 > Script idempotent: yeniden çalıştırmak güvenli.
 
 > **⚠️ Bir kerelik manuel adım (GitHub API kısıtlaması, ~30 sn):**
-> Projects v2 workflow toggle'ları için API yok (community discussion #194509). Board oluştuktan sonra GUI'den:
-> 1. Board’u aç (script ekrana URL yazar)
+> Projects v2 workflow toggle'ları için public API yok (community discussion #194509). Board oluştuktan sonra GUI'den (ADR-0016 — **Issues-only board**):
+> 1. Board'u aç (script ekrana URL yazar)
 > 2. Sağ üst **⋯ → Workflows**
-> 3. **"Auto-add to project"** → Enable, target repository = bu repo
-> 4. **"Item closed"** → Enable, Set status: **Done**
-> 5. (Opsiyonel) **"Pull request merged"** → Enable, Set status: **Done**
+> 3. **"Auto-add to project"** → **Disable** _(varsayılan açık gelir; PR'ları board'a almıyoruz — ADR-0016)_
+> 4. **"Item closed"** → **Enable**, Set status: **Done** _(issue kapanınca Done'a düşer)_
+> 5. **"Pull request merged"** → **Disable / leave off** _(PR'lar board'a kart olmaz; linked issue Done olunca yansır)_
 >
-> Bu toggle'lar bir kez kurulduktan sonra: yeni issue/PR otomatik Backlog'a düşer, kapandığında Done'a kayar.
+> Bu üç toggle kurulduktan sonra: **yeni issue'lar otomatik Backlog'a düşer** (status:backlog label sayesinde — bkz. ADR-0013), **kapandığında Done'a kayar**. **PR'lar board'a hiç görünmez** — Issue Done olunca yansır.
+>
+> Detay: `docs/decisions/ADR-0016-issues-only-board.md`.
 
 ### 5. Agent watcher'larını başlat
 

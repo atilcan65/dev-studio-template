@@ -1,7 +1,7 @@
 name: Agent Stall
 description: Agent takıldı, ilerleyemiyor
 title: "[Stall] "
-labels: ["agent-stall", "agent:human", "status:blocked"]
+labels: ["type:chore", "status:blocked", "agent:human", "cc:orchestrator"]
 body:
   - type: dropdown
     id: agent

@@ -1,7 +1,7 @@
 name: Feature Request
 description: Yeni bir özellik veya kullanıcı ihtiyacı — PM önceliği belirleyip Architect'e geçirir
 title: "[Feature] "
-labels: ["agent:product-manager", "type:feature", "status:backlog"]
+labels: ["type:feature", "status:backlog", "agent:product-manager", "cc:product-manager"]
 body:
   - type: markdown
     attributes:
