@@ -1,7 +1,7 @@
 name: Vision Intake
 description: Yeni projenin vizyonu — PM bunu alıp epic'lere kıracak (proje başında bir kez)
 title: "[Vision] "
-labels: ["type:vision", "status:backlog", "agent:product-manager", "cc:product-manager"]
+labels: ["agent:product-manager", "type:vision", "status:backlog"]
 body:
   - type: markdown
     attributes:

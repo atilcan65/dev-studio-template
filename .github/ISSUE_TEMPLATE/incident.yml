@@ -1,7 +1,7 @@
 name: Production Incident
 description: Acil canlı sistem sorunu
 title: "[INCIDENT] "
-labels: ["type:incident", "status:backlog", "priority:P0", "agent:human", "cc:developer"]
+labels: ["type:incident", "priority:P0", "agent:human"]
 body:
   - type: markdown
     attributes:

@@ -1,7 +1,7 @@
 name: Bug Report
 description: Hata veya beklenmedik davranış
 title: "[Bug] "
-labels: ["type:bug", "status:backlog", "agent:tester", "cc:developer"]
+labels: ["type:bug", "status:backlog"]
 body:
   - type: textarea
     id: description
