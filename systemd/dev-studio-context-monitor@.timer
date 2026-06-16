@@ -1,0 +1,12 @@
+[Unit]
+Description=Run dev-studio context watchdog for project %i every 60s
+
+[Timer]
+# First run 30s after unit activation, then every 60s.
+OnActiveSec=30s
+OnUnitActiveSec=60s
+AccuracySec=5s
+Unit=dev-studio-context-monitor@%i.service
+
+[Install]
+WantedBy=timers.target

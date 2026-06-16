@@ -262,6 +262,32 @@ else
   warn "auto-reload path -> NOT active"
 fi
 
+# --- stage: install + enable context watchdog (per-project) --------------
+# Context Watchdog reads each agent pane's `% context used`, fires `/compact`
+# + reprime when ≥85%, and writes a JSON-Lines facts journal. See
+# docs/CONTEXT-HYGIENE.md § 6 (Context Watchdog).
+#
+# Unit files use systemd template specifiers (%h, %i) and need no rendering —
+# we just copy them and enable the @<PROJECT_NAME> instance.
+CTX_SRC_SVC="$REPO_ROOT/systemd/dev-studio-context-monitor@.service"
+CTX_SRC_TIM="$REPO_ROOT/systemd/dev-studio-context-monitor@.timer"
+if [ -f "$CTX_SRC_SVC" ] && [ -f "$CTX_SRC_TIM" ]; then
+  log "installing context watchdog units"
+  install -m 644 "$CTX_SRC_SVC" "$SYSTEMD_USER_DIR/dev-studio-context-monitor@.service"
+  install -m 644 "$CTX_SRC_TIM" "$SYSTEMD_USER_DIR/dev-studio-context-monitor@.timer"
+  systemctl --user daemon-reload
+  ctx_timer="dev-studio-context-monitor@${PROJECT_NAME}.timer"
+  systemctl --user enable --now "$ctx_timer" >/dev/null 2>&1 || true
+  if systemctl --user is-active "$ctx_timer" >/dev/null 2>&1; then
+    ok "context watchdog -> active ($ctx_timer, every 60s)"
+  else
+    warn "context watchdog -> NOT active (check: journalctl --user -u $ctx_timer -n 50)"
+  fi
+else
+  warn "context watchdog units not found in $REPO_ROOT/systemd/ — skipping"
+  warn "  expected: dev-studio-context-monitor@.service + .timer"
+fi
+
 # --- linger (optional, asks operator) ------------------------------------
 log "checking linger (controls watcher start on VM boot before login)"
 if loginctl show-user "$USER" 2>/dev/null | grep -q "Linger=yes"; then

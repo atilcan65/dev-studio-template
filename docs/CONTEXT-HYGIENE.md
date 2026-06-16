@@ -121,14 +121,111 @@ Soft re-prime is **enqueued**, never interrupting. The contract:
 If you cannot wait, escalate to full restart (§ 4.2) — but understand
 that full restart abandons all in-flight work across all 5 agents.
 
-## 6. What Does NOT Need Re-priming
+## 6. Context Watchdog (Automated Re-prime)
 
-- Compaction events (auto-handled by Claude Code).
+### 6.1 Why a watchdog exists
+
+Claude Code advertises auto-compaction when conversation length approaches
+the model's context window. **In sustained-load multi-agent sessions we
+have repeatedly observed this failing to trigger.** Agents pile up to
+`100% context used` (visible in the Claude Code status line) and stay
+there — answering occasional questions but unable to ingest new doctrine,
+ADRs, or sprint guidance. They drift.
+
+The Context Watchdog closes this gap by **deterministically** firing
+`/compact` (a real Claude Code slash command) followed by a re-prime
+message when an agent's context usage crosses a configurable threshold.
+It does **not** replace Claude Code's auto-compact — it backstops it.
+
+### 6.2 Components
+
+| File | Role |
+|------|------|
+| `scripts/agent-context-monitor.sh` | Polls every pane, decides who needs reprime |
+| `scripts/reprime-agent.sh` | Sends `/compact` + re-prime message (called by monitor) |
+| `scripts/agent-journal.sh` | JSON-Lines facts journal (append / summary / rotate) |
+| `systemd/dev-studio-context-monitor@.service` | Oneshot — runs the monitor |
+| `systemd/dev-studio-context-monitor@.timer` | Fires the service every 60s |
+
+### 6.3 Decision logic (per agent, per tick)
+
+```
+read `% context used` from tmux pane (last ~2000 lines)
+  └─ if absent: log "no reading", skip
+
+if pct < THRESHOLD_PCT (default 85):
+  if previously critical: clear last_critical_seen_utc
+  log OK and continue
+
+if pane is busy ("Worked for...", "Cogitated for...",
+                 "Compacting conversation", etc.):
+  log busy-skip → retry next cycle
+
+if within COOLDOWN_MIN (default 10) of previous reprime:
+  log cooldown-skip
+
+else:
+  fire reprime-agent.sh <role>
+  → /compact + Enter + 3s sleep
+  → multi-line reprime message via tmux load-buffer + paste-buffer
+  → agent-journal.sh append context_alert + reprime
+```
+
+### 6.4 Tunables (override via systemd drop-in)
+
+| Env | Default | Meaning |
+|-----|---------|---------|
+| `THRESHOLD_PCT` | 85 | Fire reprime at or above this % |
+| `CRITICAL_PCT` | 100 | Sustained-critical floor |
+| `CRITICAL_SUSTAIN_MIN` | 5 | Minutes at CRITICAL before warning |
+| `COOLDOWN_MIN` | 10 | Minimum gap between reprimes per role |
+
+Override with: `systemctl --user edit dev-studio-context-monitor@<PROJECT>.service`
+
+### 6.5 Journal (`agent-journal.sh`)
+
+- **Write-only by the system** — agents NEVER write to the journal.
+  This is a deliberate drift-safety guarantee: an agent that misreads
+  facts cannot retroactively rewrite them.
+- **JSON Lines** at `/var/log/dev-studio/<PROJECT>/journal/facts-YYYY-MM-DD.jsonl`
+  (falls back to `~/.dev-studio/<PROJECT>/journal/` if `/var/log` is
+  unwritable).
+- **Schema:** `{ts, type, role, ref, fact, value}` — flock-protected
+  against concurrent appends from monitor + reprime invocations.
+- **Reprime message reads the journal** — last 6h, role-scoped — and
+  attaches a summary at the top of the message so the agent wakes with
+  situational context.
+
+### 6.6 What gets logged
+
+Every reprime decision appears in the journal:
+
+```jsonl
+{"ts":"...","type":"context_alert","role":"architect","ref":"watchdog","fact":"context_pct_before","value":"100"}
+{"ts":"...","type":"reprime","role":"architect","ref":"manual-or-watchdog","fact":"compacted=yes","value":""}
+{"ts":"...","type":"reprime","role":"architect","ref":"watchdog","fact":"fired","value":"ok"}
+```
+
+This gives the operator a complete audit trail of which agent was
+reprimed when, and why.
+
+### 6.7 Installation
+
+Handled automatically by `scripts/install/dev-studio-install-systemd.sh`.
+After project bootstrap the timer is enabled and starts firing within
+30 seconds.
+
+## 7. What Does NOT Need Re-priming
+
 - Minor PR comment exchanges.
 - Scheduled idle time (agent does nothing → cannot drift).
 - Token rate-limit pauses (Claude Code resumes correctly).
 
-## 7. Agent-side Protocol
+> Previous versions of this doc listed "compaction events (auto-handled
+> by Claude Code)" here. That assumption proved unsafe under sustained
+> multi-agent load — see § 6.1. The Context Watchdog now backstops it.
+
+## 8. Agent-side Protocol
 
 Each role doc (`.claude/agents/*.md`) carries a **REPRIME Protocol**
 section that defines exactly how an agent must respond when it receives
@@ -145,8 +242,11 @@ to full restart (§ 4.2).
 
 ## See Also
 
-- `scripts/reprime-agent.sh` — implementation (soft re-prime).
+- `scripts/reprime-agent.sh` — implementation (soft re-prime + `/compact`).
+- `scripts/agent-context-monitor.sh` — Context Watchdog poller.
+- `scripts/agent-journal.sh` — facts journal helper.
 - `scripts/dev-studio-start.sh` — launcher (full restart path).
+- `systemd/dev-studio-context-monitor@.{service,timer}` — watchdog units.
 - `.claude/agents/*.md` — per-role REPRIME Protocol section.
 - `docs/decisions/` — ADRs that may trigger re-prime when merged.
 - `.claude/CLAUDE.md` — agent identity & project context.

@@ -1,0 +1,20 @@
+[Unit]
+Description=Dev-Studio context-usage watchdog for project %i
+After=default.target
+# Soft dependency — watcher absence is not fatal.
+Wants=dev-studio-watcher@%i--orchestrator.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/projects/%i
+Environment=PROJECT_NAME=%i
+Environment=TMUX_SESSION=dev-studio
+Environment=TMUX_WINDOW=main
+# Defaults can be overridden via drop-in /etc/systemd/system/dev-studio-context-monitor@%i.service.d/override.conf
+Environment=THRESHOLD_PCT=85
+Environment=CRITICAL_PCT=100
+Environment=CRITICAL_SUSTAIN_MIN=5
+Environment=COOLDOWN_MIN=10
+ExecStart=/bin/bash %h/projects/%i/scripts/agent-context-monitor.sh
+StandardOutput=journal
+StandardError=journal

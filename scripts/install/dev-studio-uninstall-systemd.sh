@@ -97,10 +97,23 @@ for role in "${ROLES[@]}"; do
 done
 ok "removed per-instance drop-in override dirs"
 
+# --- stop + disable context watchdog -------------------------------------
+ctx_timer="dev-studio-context-monitor@${PROJECT_NAME}.timer"
+ctx_svc="dev-studio-context-monitor@${PROJECT_NAME}.service"
+for u in "$ctx_timer" "$ctx_svc"; do
+  if systemctl --user is-enabled "$u" >/dev/null 2>&1 \
+     || systemctl --user is-active "$u" >/dev/null 2>&1; then
+    systemctl --user disable --now "$u" >/dev/null 2>&1 || true
+    ok "disabled $u"
+  fi
+done
+
 # --- purge mode -----------------------------------------------------------
 if [ "$PURGE" = "1" ]; then
   log "PURGE mode: removing generic template + heartbeat dir"
   rm -f "$SYSTEMD_USER_DIR/dev-studio-watcher@.service"
+  rm -f "$SYSTEMD_USER_DIR/dev-studio-context-monitor@.service"
+  rm -f "$SYSTEMD_USER_DIR/dev-studio-context-monitor@.timer"
   if [ -d "$PROJECT_HEARTBEAT_DIR" ]; then
     rm -rf "$PROJECT_HEARTBEAT_DIR" || warn "could not remove $PROJECT_HEARTBEAT_DIR (try sudo)"
   fi

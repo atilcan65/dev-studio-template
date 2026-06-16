@@ -1,57 +1,45 @@
 #!/usr/bin/env bash
-# reprime-agent.sh — Soft re-prime an agent: re-read CLAUDE.md + role doc.
+# reprime-agent.sh — Soft re-prime an agent with guaranteed compaction.
 #
-# Purpose
-# -------
-# When doctrine on `main` changes (new ADR, role-doc patch, CLAUDE.md edit),
-# the running agent's system prompt may be stale. This script sends the
-# agent a single chat message instructing it to re-read its source-of-truth
-# files and re-align. No restart required.
+# WHAT'S NEW (v2 — Context Watchdog integration)
+# ----------------------------------------------
+# 1. Before sending the re-prime message, fire `/compact` slash command to
+#    deterministically trigger Claude Code's conversation compaction. We no
+#    longer rely on Claude Code's auto-compact heuristic, which proved to
+#    stay at "100% context used" indefinitely under sustained load.
+# 2. Re-prime message now instructs the agent to re-read `scripts/kickoff/<role>.txt.tmpl`
+#    in addition to CLAUDE.md and role doc. Kickoff template (FIRST ACTION
+#    doctrine) is normally only read at session start; if auto-compact dropped
+#    it, the agent loses doctrine until next restart.
+# 3. If a facts journal exists, attach a 6h role-scoped summary at the top
+#    of the message so the agent wakes up with situational context.
 #
-# Behavior
-# --------
 # Soft, enqueued: the message goes into the agent's chat input queue. The
 # agent finishes its current turn (and any larger in-flight work unit)
 # before processing the re-prime. See docs/CONTEXT-HYGIENE.md § 5.
 #
 # Targeting strategy
 # ------------------
-# We address panes by their **deterministic pane index** in the tmux
-# session, as defined by scripts/dev-studio-start.sh:
+# We address panes by their deterministic pane index in the tmux session,
+# as defined by scripts/dev-studio-start.sh:
 #
 #     pane 0 = orchestrator
 #     pane 1 = product-manager
 #     pane 2 = architect
 #     pane 3 = developer
 #     pane 4 = tester
-#     pane 5 = human  (not a re-prime target)
-#
-# Why not pane_title?
-#   - Tried it. Claude Code overlays activity indicators (e.g. "*developer",
-#     "· orchestrator") on top of the title set by `tmux select-pane -T`,
-#     making title-based matching unreliable in practice.
-#   - The launcher creates panes in a fixed split order — index is
-#     deterministic and survives layout changes (we never reorder).
-#
-# If the launcher's layout ever changes, update both this map AND
-# scripts/dev-studio-start.sh together. Keep them in lockstep.
-#
-# Does NOT:
-#   - Clear conversation history (use full restart in scripts/dev-studio-start.sh).
-#   - Touch agent-state.sh JSON (that's the watcher's domain).
-#   - Modify any GitHub state.
+#     pane 5 = human (not a re-prime target)
 #
 # Usage
 # -----
 #   bash scripts/reprime-agent.sh <role>
 #
-# Where <role> is one of: orchestrator, product-manager, architect,
-# developer, tester.
-#
 # Env overrides
 # -------------
-#   TMUX_SESSION  (default: dev-studio)
-#   TMUX_WINDOW   (default: main)
+#   TMUX_SESSION             default: dev-studio
+#   TMUX_WINDOW              default: main
+#   REPRIME_SKIP_COMPACT     set to 1 to skip the /compact pre-step
+#   REPRIME_JOURNAL_HOURS    default: 6 (hours of journal summary to attach)
 #
 # Exit codes
 # ----------
@@ -63,8 +51,10 @@ set -euo pipefail
 
 TMUX_SESSION="${TMUX_SESSION:-dev-studio}"
 TMUX_WINDOW="${TMUX_WINDOW:-main}"
+REPRIME_SKIP_COMPACT="${REPRIME_SKIP_COMPACT:-0}"
+REPRIME_JOURNAL_HOURS="${REPRIME_JOURNAL_HOURS:-6}"
 
-# Role → pane index map. MUST match scripts/dev-studio-start.sh layout.
+# Role → pane index map.
 declare -A ROLE_PANE=(
   [orchestrator]=0
   [product-manager]=1
@@ -80,15 +70,16 @@ usage() {
   echo "  role: ${VALID_ROLES[*]}"
   echo ""
   echo "Env overrides:"
-  echo "  TMUX_SESSION  (default: dev-studio)"
-  echo "  TMUX_WINDOW   (default: main)"
+  echo "  TMUX_SESSION             default: dev-studio"
+  echo "  TMUX_WINDOW              default: main"
+  echo "  REPRIME_SKIP_COMPACT     set 1 to skip /compact pre-step"
+  echo "  REPRIME_JOURNAL_HOURS    default: 6"
   exit 1
 }
 
 [ $# -eq 1 ] || usage
 ROLE="$1"
 
-# Validate role.
 if [ -z "${ROLE_PANE[$ROLE]+x}" ]; then
   echo "ERROR: invalid role '$ROLE'"
   usage
@@ -96,7 +87,7 @@ fi
 PANE_IDX="${ROLE_PANE[$ROLE]}"
 TARGET="${TMUX_SESSION}:${TMUX_WINDOW}.${PANE_IDX}"
 
-# Resolve role-doc path (try common locations).
+# Resolve role-doc path.
 ROLE_DOC=""
 for candidate in \
   ".claude/agents/${ROLE}.md" \
@@ -109,43 +100,83 @@ for candidate in \
 done
 
 if [ -z "$ROLE_DOC" ]; then
-  echo "ERROR: role doc for '$ROLE' not found in known locations."
-  echo "  Tried: .claude/agents/${ROLE}.md, docs/roles/${ROLE}.md, docs/agents/${ROLE}.md"
-  echo "  Run from the repo root."
+  echo "ERROR: role doc for '$ROLE' not found in known locations." >&2
+  echo "  Tried: .claude/agents/${ROLE}.md, docs/roles/${ROLE}.md, docs/agents/${ROLE}.md" >&2
+  echo "  Run from the repo root." >&2
   exit 2
 fi
 
-# Validate tmux session exists.
+KICKOFF_TMPL="scripts/kickoff/${ROLE}.txt.tmpl"
+if [ ! -f "$KICKOFF_TMPL" ]; then
+  echo "WARN: kickoff template not found at $KICKOFF_TMPL — re-prime will skip that hint." >&2
+  KICKOFF_TMPL=""
+fi
+
+# Validate tmux infra.
 if ! tmux has-session -t "$TMUX_SESSION" 2>/dev/null; then
-  echo "ERROR: tmux session '$TMUX_SESSION' not found."
-  echo "  Start it via: scripts/dev-studio-start.sh start"
+  echo "ERROR: tmux session '$TMUX_SESSION' not found." >&2
   exit 2
 fi
-
-# Validate window exists.
 if ! tmux list-windows -t "$TMUX_SESSION" -F '#W' | grep -qx "$TMUX_WINDOW"; then
-  echo "ERROR: tmux window '$TMUX_WINDOW' not found in session '$TMUX_SESSION'."
-  echo "  Available windows:"
-  tmux list-windows -t "$TMUX_SESSION" -F '    #W'
+  echo "ERROR: tmux window '$TMUX_WINDOW' not found in session '$TMUX_SESSION'." >&2
   exit 2
 fi
-
-# Validate target pane exists at the expected index.
 if ! tmux list-panes -t "${TMUX_SESSION}:${TMUX_WINDOW}" -F '#P' | grep -qx "$PANE_IDX"; then
-  echo "ERROR: pane index ${PANE_IDX} (expected for role '${ROLE}') not found in ${TMUX_SESSION}:${TMUX_WINDOW}."
-  echo "  Available panes (index : title) — for diagnostics only, not used for targeting:"
-  tmux list-panes -t "${TMUX_SESSION}:${TMUX_WINDOW}" -F '    #{pane_index} : #{pane_title}'
-  echo ""
-  echo "  Tip: the launcher creates panes 0..5 in a fixed order. If pane"
-  echo "       ${PANE_IDX} is missing, the launcher's layout has changed"
-  echo "       or panes have been killed individually. Run a full restart:"
-  echo "       scripts/dev-studio-start.sh stop && scripts/dev-studio-start.sh start"
+  echo "ERROR: pane index ${PANE_IDX} (role '${ROLE}') not found." >&2
   exit 2
 fi
 
-# Build the re-prime message. The [REPRIME] prefix is the trigger the
-# role doc REPRIME Protocol section reacts to.
-MESSAGE="[REPRIME] Doctrine may have changed on main. Before your next action:
+# ── STEP 1: deterministic compaction ────────────────────────────────────────
+if [ "$REPRIME_SKIP_COMPACT" != "1" ]; then
+  echo "→ Sending /compact to ${TARGET} (deterministic compaction)"
+  tmux send-keys -t "$TARGET" "/compact" Enter
+  # /compact can take 30-90s; we don't block here, just give Claude a head start
+  # before the re-prime message lands. Re-prime is itself soft-enqueued so the
+  # agent processes /compact first regardless.
+  sleep 3
+fi
+
+# ── STEP 2: build journal summary (if journal exists) ───────────────────────
+JOURNAL_SCRIPT=""
+for candidate in \
+  "$(dirname "$0")/agent-journal.sh" \
+  "./scripts/agent-journal.sh"; do
+  if [ -x "$candidate" ]; then
+    JOURNAL_SCRIPT="$candidate"
+    break
+  fi
+done
+
+JOURNAL_SUMMARY=""
+if [ -n "$JOURNAL_SCRIPT" ]; then
+  if SUMMARY_OUT="$("$JOURNAL_SCRIPT" summary "$ROLE" "$REPRIME_JOURNAL_HOURS" 2>/dev/null)"; then
+    if [ -n "$SUMMARY_OUT" ]; then
+      JOURNAL_SUMMARY="$SUMMARY_OUT"
+    fi
+  fi
+fi
+
+# ── STEP 3: build re-prime message ──────────────────────────────────────────
+MESSAGE_HEAD="[REPRIME] Doctrine may have changed and/or your context was compacted. Before your next action:"
+
+KICKOFF_LINE=""
+if [ -n "$KICKOFF_TMPL" ]; then
+  KICKOFF_LINE="
+6. Re-read ${KICKOFF_TMPL} to refresh your FIRST ACTION doctrine
+   (this template is normally only read at session start; compaction
+   may have dropped it from your working memory)."
+fi
+
+JOURNAL_BLOCK=""
+if [ -n "$JOURNAL_SUMMARY" ]; then
+  JOURNAL_BLOCK="
+
+── LAST ${REPRIME_JOURNAL_HOURS}H FACTS (system-recorded, not your own notes) ──
+${JOURNAL_SUMMARY}
+"
+fi
+
+MESSAGE="${MESSAGE_HEAD}
 1. Finish any in-flight work unit (do not abandon partial work).
 2. Re-read .claude/CLAUDE.md (project root) and ${ROLE_DOC}.
 3. Discard any cached assumptions from this conversation about labels,
@@ -153,11 +184,10 @@ MESSAGE="[REPRIME] Doctrine may have changed on main. Before your next action:
    truth before acting.
 4. Acknowledge with: [REPRIME ACK] ${ROLE}: <one-line summary of any
    doctrine change noticed, or 'no change'>.
-5. Resume normal duties under the refreshed doctrine."
+5. Resume normal duties under the refreshed doctrine.${KICKOFF_LINE}
+${JOURNAL_BLOCK}"
 
-# Use load-buffer + paste-buffer for safe multi-line input.
-# `send-keys` with a multi-line string can mis-interpret newlines on
-# some tmux versions; load/paste-buffer is the canonical safe path.
+# ── STEP 4: paste + submit ──────────────────────────────────────────────────
 TMP_BUF="$(mktemp)"
 trap 'rm -f "$TMP_BUF"' EXIT
 printf '%s\n' "$MESSAGE" > "$TMP_BUF"
@@ -166,11 +196,17 @@ BUFFER_NAME="reprime-${ROLE}-$$"
 tmux load-buffer -b "$BUFFER_NAME" "$TMP_BUF"
 tmux paste-buffer -b "$BUFFER_NAME" -t "$TARGET" -p
 tmux delete-buffer -b "$BUFFER_NAME"
-
-# Submit the message to the agent's chat input.
 tmux send-keys -t "$TARGET" Enter
 
+# ── STEP 5: append to journal (if available) ────────────────────────────────
+if [ -n "$JOURNAL_SCRIPT" ]; then
+  "$JOURNAL_SCRIPT" append reprime "$ROLE" "manual-or-watchdog" \
+    "compacted=$([ "$REPRIME_SKIP_COMPACT" = "1" ] && echo no || echo yes)" >/dev/null 2>&1 || true
+fi
+
 echo "✓ Sent re-prime to ${TARGET} (role: ${ROLE}, pane index: ${PANE_IDX})"
-echo "  Role doc: ${ROLE_DOC}"
-echo "  Watch the pane for: [REPRIME ACK] ${ROLE}: ..."
-echo "  If no ack within one polling cycle, see docs/CONTEXT-HYGIENE.md § 4.2."
+echo "  Role doc:       ${ROLE_DOC}"
+[ -n "$KICKOFF_TMPL" ]      && echo "  Kickoff hint:   ${KICKOFF_TMPL}"
+[ -n "$JOURNAL_SUMMARY" ]   && echo "  Journal:        ${REPRIME_JOURNAL_HOURS}h summary attached"
+[ "$REPRIME_SKIP_COMPACT" = "1" ] && echo "  /compact:       SKIPPED (REPRIME_SKIP_COMPACT=1)" || echo "  /compact:       sent before message"
+echo "  Watch for:      [REPRIME ACK] ${ROLE}: ..."
