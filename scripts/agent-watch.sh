@@ -1,9 +1,13 @@
 #!/usr/bin/env bash
 # agent-watch.sh — GitHub-native autonomy: poll for new wake-up events for a role.
 #
-# Per ADR-0002 + ADR-0003 + ADR-0005 (Event Model v3): each agent's work queue
-# lives on GitHub. This script queries the queue, diffs against the agent's
-# state file, and emits new events as JSON.
+# Per ADR-0002 + ADR-0003 + ADR-0005 + ADR-0017 (Event Model v4): each agent's
+# work queue lives on GitHub. This script queries the queue, diffs against
+# the agent's state file, and emits new events as JSON.
+#
+# Event Model v4 (ADR-0017) adds 2 event kinds to the v3 taxonomy:
+#   `issue_comment_mention` — @<role> mentions in issue comments (was: PR-only)
+#   `periodic_backlog_scan`  — 30-min synthetic wake when role has open queue
 #
 # Event Model v3 (ADR-0005) adds `pr_merged` to the v2 taxonomy:
 #   When a PR is merged, the watcher fans out a `pr-merged-<n>-<sha7>` event to
@@ -435,6 +439,125 @@ query_pr_mentions() {
   done | jq -s 'add // []'
 }
 
+# v4 (ADR-0017): issue-comment @<role> mentions.
+# Mirrors query_pr_mentions for issues. The standup ceremony lives on a single
+# threaded issue per sprint; without this detector, role-tagged status asks in
+# issue comments fire no wake event.
+query_issue_mentions() {
+  # Issues touched after last_seen, whose comments contain @<role>.
+  local issues
+  issues="$(gh issue list \
+    --repo "$REPO" \
+    --state open \
+    --limit 30 \
+    --json number,title,url,updatedAt \
+    --jq "[ .[] | select(.updatedAt > \"$LAST_SEEN\") ]" 2>/dev/null || echo '[]')"
+
+  echo "$issues" | jq -r '.[].number' | while read -r num; do
+    [ -z "$num" ] && continue
+    # Issue body itself may contain mentions; check it on first poll-after-create.
+    # For ongoing detection we focus on comments (issue body is covered by
+    # query_assigned_issues / query_board_changes when labels are set).
+    gh issue view "$num" --repo "$REPO" --json number,title,url,comments \
+      --jq "
+        (.comments |
+         map(select(.body != null and (.body | test(\"@${ROLE}\\\\b\"; \"i\")))) |
+         map(select(.createdAt > \"$LAST_SEEN\")) |
+         map({
+           id: (\"issue-mention-\" + (\$num | tostring) + \"-\" + (.id // .createdAt)),
+           kind: \"issue_comment_mention\",
+           number: \$num,
+           title: \"\",
+           url: \"https://github.com/${REPO}/issues/\\(\$num)\",
+           updated_at: .createdAt,
+           context: {
+             author: (.author.login // \"unknown\"),
+             body_preview: (.body[:300])
+           }
+         }))" \
+      --jq-arg num "$num" 2>/dev/null || true
+  done | jq -s 'add // []'
+}
+
+# v4 (ADR-0017): periodic backlog scan.
+# Fires every PERIODIC_SCAN_INTERVAL_SEC (default 1800 = 30 min) per role, if
+# the role has any open items with `agent:<role>` or `cc:<role>`, regardless
+# of recent GitHub state changes. Surfaces the queue list so the agent's
+# doctrine can pick up unblocked work even when the event stream is sparse.
+#
+# Throttle: state field `last_synthetic_scan_utc` prevents re-fire every poll.
+# Bucketed by 5-min windows so the same wake doesn't re-fire every 60s if
+# state-file write races the next poll.
+query_periodic_backlog_scan() {
+  local interval="${PERIODIC_SCAN_INTERVAL_SEC:-1800}"
+  local now_epoch last_scan_epoch elapsed bucket
+  now_epoch="$(date -u +%s)"
+  bucket=$(( now_epoch / 300 ))
+
+  local last_scan
+  last_scan="$("$STATE_HELPER" get "$ROLE" last_synthetic_scan_utc 2>/dev/null || true)"
+  if [ -n "$last_scan" ] && [ "$last_scan" != "null" ]; then
+    last_scan_epoch="$(date -u -d "$last_scan" +%s 2>/dev/null || echo 0)"
+    elapsed=$(( now_epoch - last_scan_epoch ))
+    if [ "$elapsed" -lt "$interval" ]; then
+      # Throttled — emit nothing
+      echo '[]'
+      return 0
+    fi
+  fi
+
+  # Collect open issues + PRs with agent:<role> or cc:<role>
+  local issues prs combined
+  issues="$(gh issue list \
+    --repo "$REPO" \
+    --state open \
+    --limit 50 \
+    --json number,title,url,labels \
+    --jq "[ .[] | select((.labels // []) | map(.name) | any(. == \"agent:${ROLE}\" or . == \"cc:${ROLE}\")) | {number, title, url, labels: (.labels | map(.name))} ]" 2>/dev/null || echo '[]')"
+  prs="$(gh pr list \
+    --repo "$REPO" \
+    --state open \
+    --limit 50 \
+    --json number,title,url,labels \
+    --jq "[ .[] | select((.labels // []) | map(.name) | any(. == \"agent:${ROLE}\" or . == \"cc:${ROLE}\")) | {number, title, url, labels: (.labels | map(.name))} ]" 2>/dev/null || echo '[]')"
+  combined="$(jq -s '.[0] + .[1]' <(echo "$issues") <(echo "$prs"))"
+
+  local count
+  count="$(echo "$combined" | jq 'length')"
+  if [ "$count" -eq 0 ]; then
+    # Queue empty — do not fire, do not advance HWM
+    echo '[]'
+    return 0
+  fi
+
+  # Fire: advance HWM and emit one synthetic event with queue list in context
+  local now_iso
+  now_iso="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+  "$STATE_HELPER" set "$ROLE" last_synthetic_scan_utc "$now_iso" >/dev/null 2>&1 || true
+
+  jq -n \
+    --arg role "$ROLE" \
+    --arg now "$now_iso" \
+    --arg bucket "$bucket" \
+    --arg url "https://github.com/${REPO}/issues?q=is%3Aopen+label%3Aagent%3A${ROLE}" \
+    --arg count "$count" \
+    --argjson items "$combined" '
+    [ {
+      id: ("backlog-scan-" + $role + "-b" + $bucket),
+      kind: "periodic_backlog_scan",
+      number: 0,
+      title: ("Periodic backlog scan \u2014 " + $count + " open item(s) in queue"),
+      url: $url,
+      updated_at: $now,
+      context: {
+        role: $role,
+        open_items: $items,
+        note: "Synthetic wake \u2014 no recent GitHub state change. Reason: catch stuck queues when event stream is sparse (ADR-0017)."
+      }
+    } ]
+  '
+}
+
 query_stale_cc() {
   # Deadlock breaker: if cc:<role> has sat on a PR for > STALE_CC_SEC without
   # any state change (no new commit, no new review, no label flip), emit a
@@ -724,7 +847,7 @@ poll_once() {
   init_pr_merged_hwm
   init_pr_labeled_hwm
 
-  local assigned reviews commits mentions stale board pr_merged pr_labeled
+  local assigned reviews commits mentions stale board pr_merged pr_labeled issue_mentions periodic_scan
   assigned="$(query_assigned_issues || echo '[]')"
   reviews="$(query_review_requests || echo '[]')"
   commits="$(query_new_commits_on_assigned_prs || echo '[]')"
@@ -733,13 +856,17 @@ poll_once() {
   board="$(query_board_changes || echo '[]')"
   pr_merged="$(query_pr_merged 2>/dev/null || echo '[]')"
   pr_labeled="$(query_pr_labeled 2>/dev/null || echo '[]')"
+  # v4 (ADR-0017):
+  issue_mentions="$(query_issue_mentions 2>/dev/null || echo '[]')"
+  periodic_scan="$(query_periodic_backlog_scan 2>/dev/null || echo '[]')"
 
   # Merge and dedupe
   local merged
   merged="$(jq -s 'add | unique_by(.id)' \
     <(echo "$assigned") <(echo "$reviews") <(echo "$commits") \
     <(echo "$mentions") <(echo "$stale") <(echo "$board") \
-    <(echo "$pr_merged") <(echo "$pr_labeled"))"
+    <(echo "$pr_merged") <(echo "$pr_labeled") \
+    <(echo "$issue_mentions") <(echo "$periodic_scan"))"
 
   # Filter out events already in processed_event_ids
   local state_file new_events

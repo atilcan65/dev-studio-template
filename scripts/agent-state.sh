@@ -101,7 +101,8 @@ cmd_init() {
          burst_until_utc: null,
          pr_merged_last_seen_utc: null,
          pr_labeled_last_seen_utc: null,
-         polled_at_utc: null
+         polled_at_utc: null,
+         last_synthetic_scan_utc: null
        }' > "$file"
     echo "Initialised state: $file"
   else
@@ -124,6 +125,10 @@ cmd_init() {
     fi
     if ! jq -e 'has("polled_at_utc")' "$file" >/dev/null 2>&1; then
       jq_inplace "$file" '.polled_at_utc = null'
+    fi
+    # v3 → v4 backfill (ADR-0017): last_synthetic_scan_utc for periodic_backlog_scan throttle
+    if ! jq -e 'has("last_synthetic_scan_utc")' "$file" >/dev/null 2>&1; then
+      jq_inplace "$file" '.last_synthetic_scan_utc = null'
     fi
     echo "State already exists: $file"
   fi
