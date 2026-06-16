@@ -52,6 +52,7 @@ set -euo pipefail
 TMUX_SESSION="${TMUX_SESSION:-dev-studio}"
 TMUX_WINDOW="${TMUX_WINDOW:-main}"
 REPRIME_SKIP_COMPACT="${REPRIME_SKIP_COMPACT:-0}"
+REPRIME_USE_CLEAR="${REPRIME_USE_CLEAR:-0}"
 REPRIME_JOURNAL_HOURS="${REPRIME_JOURNAL_HOURS:-6}"
 
 # Role → pane index map.
@@ -73,6 +74,8 @@ usage() {
   echo "  TMUX_SESSION             default: dev-studio"
   echo "  TMUX_WINDOW              default: main"
   echo "  REPRIME_SKIP_COMPACT     set 1 to skip /compact pre-step"
+  echo "  REPRIME_USE_CLEAR        set 1 to send /clear instead of /compact"
+  echo "                            (use when pane is frozen / API context overflow)"
   echo "  REPRIME_JOURNAL_HOURS    default: 6"
   exit 1
 }
@@ -126,14 +129,40 @@ if ! tmux list-panes -t "${TMUX_SESSION}:${TMUX_WINDOW}" -F '#P' | grep -qx "$PA
   exit 2
 fi
 
-# ── STEP 1: deterministic compaction ────────────────────────────────────────
+# ── STEP 0: clear any pending input buffer (Esc) ────────────────────────────
+# A frozen pane often has a half-typed prompt or a UI overlay (`bypass
+# permissions on …`, `How is Claude doing this session?`). Esc cancels these
+# so the subsequent /compact or /clear lands on a clean prompt line.
+echo "→ Sending Esc to ${TARGET} (clear any pending input/overlay)"
+tmux send-keys -t "$TARGET" Escape
+sleep 1
+
+# ── STEP 1: deterministic compaction (or hard clear) ────────────────────────
 if [ "$REPRIME_SKIP_COMPACT" != "1" ]; then
-  echo "→ Sending /compact to ${TARGET} (deterministic compaction)"
-  tmux send-keys -t "$TARGET" "/compact" Enter
-  # /compact can take 30-90s; we don't block here, just give Claude a head start
-  # before the re-prime message lands. Re-prime is itself soft-enqueued so the
-  # agent processes /compact first regardless.
-  sleep 3
+  if [ "$REPRIME_USE_CLEAR" = "1" ]; then
+    echo "→ Sending /clear to ${TARGET} (HARD reset — context overflow / frozen pane)"
+    tmux send-keys -t "$TARGET" "/clear" Enter
+    # /clear wipes conversation history entirely. The kickoff re-read instruction
+    # in the re-prime message restores doctrine.
+    #
+    # Some Claude Code builds show a 'Are you sure? [y/n]' confirmation after
+    # /clear. We send a defensive Enter (and 'y' Enter) a moment later to accept
+    # such a confirmation; if no dialog appears, these become no-op stray inputs
+    # on an empty prompt line and are harmless (the next Esc before paste-buffer
+    # would clear them, but we are already past that).
+    sleep 2
+    tmux send-keys -t "$TARGET" Enter
+    sleep 1
+    tmux send-keys -t "$TARGET" Escape
+    sleep 2
+  else
+    echo "→ Sending /compact to ${TARGET} (deterministic compaction)"
+    tmux send-keys -t "$TARGET" "/compact" Enter
+    # /compact can take 30-90s; we don't block here, just give Claude a head start
+    # before the re-prime message lands. Re-prime is itself soft-enqueued so the
+    # agent processes /compact first regardless.
+    sleep 3
+  fi
 fi
 
 # ── STEP 2: build journal summary (if journal exists) ───────────────────────
@@ -200,13 +229,26 @@ tmux send-keys -t "$TARGET" Enter
 
 # ── STEP 5: append to journal (if available) ────────────────────────────────
 if [ -n "$JOURNAL_SCRIPT" ]; then
+  if [ "$REPRIME_SKIP_COMPACT" = "1" ]; then
+    reset_fact="compacted=no"
+  elif [ "$REPRIME_USE_CLEAR" = "1" ]; then
+    reset_fact="cleared=yes"
+  else
+    reset_fact="compacted=yes"
+  fi
   "$JOURNAL_SCRIPT" append reprime "$ROLE" "manual-or-watchdog" \
-    "compacted=$([ "$REPRIME_SKIP_COMPACT" = "1" ] && echo no || echo yes)" >/dev/null 2>&1 || true
+    "$reset_fact" >/dev/null 2>&1 || true
 fi
 
 echo "✓ Sent re-prime to ${TARGET} (role: ${ROLE}, pane index: ${PANE_IDX})"
 echo "  Role doc:       ${ROLE_DOC}"
 [ -n "$KICKOFF_TMPL" ]      && echo "  Kickoff hint:   ${KICKOFF_TMPL}"
 [ -n "$JOURNAL_SUMMARY" ]   && echo "  Journal:        ${REPRIME_JOURNAL_HOURS}h summary attached"
-[ "$REPRIME_SKIP_COMPACT" = "1" ] && echo "  /compact:       SKIPPED (REPRIME_SKIP_COMPACT=1)" || echo "  /compact:       sent before message"
+if [ "$REPRIME_SKIP_COMPACT" = "1" ]; then
+  echo "  Pre-step:       SKIPPED (REPRIME_SKIP_COMPACT=1)"
+elif [ "$REPRIME_USE_CLEAR" = "1" ]; then
+  echo "  Pre-step:       /clear (HARD reset)"
+else
+  echo "  Pre-step:       /compact (soft compaction)"
+fi
 echo "  Watch for:      [REPRIME ACK] ${ROLE}: ..."

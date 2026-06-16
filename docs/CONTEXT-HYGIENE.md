@@ -153,20 +153,42 @@ It does **not** replace Claude Code's auto-compact — it backstops it.
 read `% context used` from tmux pane (last ~2000 lines)
   └─ if absent: log "no reading", skip
 
+record pct snapshot in state (stamp last_pct_change_utc only if
+  we have a prior observation AND pct differs from prev)
+
 if pct < THRESHOLD_PCT (default 85):
   if previously critical: clear last_critical_seen_utc
   log OK and continue
 
-if pane is busy ("Worked for...", "Cogitated for...",
-                 "Compacting conversation", etc.):
-  log busy-skip → retry next cycle
+use_clear = 0
+
+if pane shows API overflow error  →  use_clear = 1
+  ("context window exceeds limit", "context_length_exceeded",
+   "prompt is too long", "API Error: 400 invalid params")
+  log api_overflow event
+
+elif pane is busy ("Worked for...", "Cogitated for...",
+                   "Compacting conversation", etc.):
+  if pane is likely STUCK:
+    if pct >= CRITICAL_PCT: window = STUCK_AFTER_MIN_CRITICAL (3 min)
+    else:                   window = STUCK_AFTER_MIN          (20 min)
+    stuck = (now - last_reprime_utc) >= window
+            AND last_pct_change_utc <= last_reprime_utc
+    if stuck and ESCALATE_STUCK_TO_CLEAR=1:
+      use_clear = 1
+      log stuck_override event
+  else:
+    log busy_skip → retry next cycle
 
 if within COOLDOWN_MIN (default 10) of previous reprime:
-  log cooldown-skip
+  if use_clear == 0: log cooldown_skip and return
+  else:              log cooldown_bypass (stuck/overflow forces through)
 
 else:
   fire reprime-agent.sh <role>
-  → /compact + Enter + 3s sleep
+    with REPRIME_USE_CLEAR=1 if use_clear==1
+  → Esc (clear any UI overlay / pending input)
+  → /compact (soft) OR /clear (hard) + defensive Enter/Escape
   → multi-line reprime message via tmux load-buffer + paste-buffer
   → agent-journal.sh append context_alert + reprime
 ```
@@ -179,6 +201,9 @@ else:
 | `CRITICAL_PCT` | 100 | Sustained-critical floor |
 | `CRITICAL_SUSTAIN_MIN` | 5 | Minutes at CRITICAL before warning |
 | `COOLDOWN_MIN` | 10 | Minimum gap between reprimes per role |
+| `STUCK_AFTER_MIN` | 20 | Minutes of frozen pct (pct < 100%) before declaring the pane stuck |
+| `STUCK_AFTER_MIN_CRITICAL` | 3 | Tighter stuck window when pct >= CRITICAL_PCT (`/compact` should land in under a minute) |
+| `ESCALATE_STUCK_TO_CLEAR` | 1 | When a pane is stuck, escalate from `/compact` to `/clear` (hard reset) |
 
 Override with: `systemctl --user edit dev-studio-context-monitor@<PROJECT>.service`
 
@@ -206,6 +231,17 @@ Every reprime decision appears in the journal:
 {"ts":"...","type":"reprime","role":"architect","ref":"watchdog","fact":"fired","value":"ok"}
 ```
 
+Additional `fact` values introduced by the stuck-pane override:
+
+| Fact | When |
+|------|------|
+| `busy_skip` | Pane is busy and not yet stuck — skipped this cycle |
+| `stuck_override` | Pane is busy AND stuck (frozen pct past the threshold) — busy_skip bypassed |
+| `api_overflow` | Pane shows a context-window-exceeded error — `/clear` is forced |
+| `cooldown_skip` | Within COOLDOWN_MIN of previous reprime — nothing fired |
+| `cooldown_bypass` | Cooldown active but `use_clear=1` forced the reprime through anyway |
+| `cleared=yes` | The reprime sent `/clear` (hard reset) instead of `/compact` |
+
 This gives the operator a complete audit trail of which agent was
 reprimed when, and why.
 
@@ -214,6 +250,52 @@ reprimed when, and why.
 Handled automatically by `scripts/install/dev-studio-install-systemd.sh`.
 After project bootstrap the timer is enabled and starts firing within
 30 seconds.
+
+### 6.8 Stuck-pane / API-overflow override
+
+`agent_is_busy()` reads the pane's last 5 lines and looks for progress
+phrases like `Worked for Ns`, `Cogitated for Ns`, `Crunched for Ns`, or
+`Compacting conversation`. This protects active reasoning from being
+interrupted by a reprime mid-turn.
+
+However, a **frozen pane** keeps the last `Worked for Ns` line in its
+scrollback indefinitely — the agent is no longer making progress, but the
+watchdog interprets the stale text as "currently busy" and never fires a
+reprime. We observed real cases where PM and tester sat at 100% for 3+
+hours with `busy_skip` written every cycle.
+
+Two independent detectors break this deadlock:
+
+1. **`agent_likely_stuck`** — the pane is busy AND:
+   - `now - last_reprime_utc` ≥ the stuck threshold (`STUCK_AFTER_MIN_CRITICAL`
+     when `pct >= CRITICAL_PCT`, else `STUCK_AFTER_MIN`), AND
+   - `last_pct_change_utc <= last_reprime_utc` (the pct has not moved since
+     the last reprime stamped it).
+
+   Critical-pct uses a tighter 3-minute window because `/compact` should
+   land within ~30-90s; if it has not moved the needle in 3 minutes,
+   `/compact` failed and only `/clear` can recover. Below 100%, slower
+   progress is tolerated for up to 20 minutes.
+
+2. **`agent_api_overflow`** — grep for `context window exceeds limit`,
+   `context_length_exceeded`, `prompt is too long`, or
+   `API Error: 400 invalid params` in the last 20 lines. When this
+   appears, `/compact` literally cannot recover; only `/clear` (which
+   wipes history) works.
+
+When either detector trips, the watchdog calls `reprime-agent.sh` with
+`REPRIME_USE_CLEAR=1`. The reprime script then:
+
+- Sends `Esc` first to clear any UI overlay or half-typed prompt.
+- Sends `/clear` instead of `/compact`.
+- Defensively sends an extra `Enter` and `Escape` to dismiss any "Are
+  you sure?" confirmation some Claude Code builds show on `/clear`.
+- Pastes the full reprime message, which instructs the agent to re-read
+  `CLAUDE.md`, the role doc, and the kickoff template — since `/clear`
+  wipes conversation history entirely, kickoff doctrine must be restored.
+
+Cooldown is bypassed when `use_clear=1`. Pathological states (stuck or
+overflow) should not wait another 10-minute cooldown window.
 
 ## 7. What Does NOT Need Re-priming
 
