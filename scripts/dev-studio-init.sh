@@ -375,6 +375,30 @@ run_secret_canary() {
       printf '\n'
       printf '  Canary run URL: %s/actions/runs/%s\n' \
         "https://github.com/$GITHUB_OWNER/$GITHUB_REPO" "$run_id"
+
+      # Quota-aware hint (ADR-0016). If the run failed in seconds with no job
+      # output AND the repo is private, the dominant cause is GitHub Actions
+      # spending limit / billing, not a corrupted token. We check repo
+      # visibility cheaply and add a second diagnostic line; the original
+      # token diagnostic stays as the primary message because it is the
+      # dominant cause across all init failures historically.
+      local repo_visibility=""
+      repo_visibility="$(gh repo view "$GITHUB_OWNER/$GITHUB_REPO" \
+        --json visibility --jq '.visibility' 2>/dev/null || echo "")"
+      if [ "$repo_visibility" = "PRIVATE" ]; then
+        printf '  Hint: repo is PRIVATE and the canary returned a quick failure.\n'
+        printf '        If the Actions run shows "job not started" (billing /\n'
+        printf '        spending limit), the token is fine; the runner never\n'
+        printf '        scheduled. Options: (a) make the repo public via\n'
+        printf '        `gh repo edit %s/%s --visibility public\n' \
+          "$GITHUB_OWNER" "$GITHUB_REPO"
+        printf '        --accept-visibility-change-consequences`, or\n'
+        printf '        (b) raise the spending limit at\n'
+        printf '        https://github.com/settings/billing/spending_limit.\n'
+        printf '        New projects should be created with launcher v0.3+,\n'
+        printf '        which defaults to --public. See ADR-0016.\n\n'
+      fi
+
       fail "PROJECT_TOKEN canary FAILED (conclusion=$conclusion). The secret stored in the repo is corrupted, revoked, or lacks scope. Re-run init and re-paste the token; if it keeps failing, generate a fresh classic PAT. See ADR-0014 §3.5."
       ;;
     in_progress|queued|"")

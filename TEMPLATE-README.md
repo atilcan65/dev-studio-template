@@ -28,11 +28,29 @@ Bu repo bir **template repository**. Doğrudan kod barındırmaz; yeni bir proje
 ```bash
 gh repo create <username>/<proje-adi> \
   --template <username>/dev-studio-template \
-  --private \
+  --public \
   --clone
 
 cd <proje-adi>
 ```
+
+> **Visibility:** Bu template `--public` default'una göre tasarlanmıştır (ADR-0016).
+> Sebep: `PROJECT_TOKEN` canary'si (ADR-0014 §3.5) GitHub Actions kullanır;
+> private repolarda Actions aylık kotaya tabidir ve `"job not started"`
+> hatası adı altında henüz proje hayata gelmeden init'i düşürür. Private
+> istiyorsan `--public` yerine `--private` yaz, ama önce GitHub spending
+> limit'i ayarlı olduğundan emin ol. `dev-studio-launcher` v0.3+
+> kullanıyorsan zaten default `--public` (ADR-0016).
+
+**Daha kısa yol — launcher kullanarak:**
+
+```bash
+new-project.sh <proje-adi>            # default: --public (ADR-0016)
+new-project.sh <proje-adi> --private  # opt-in private
+```
+
+Launcher repo create + clone + init + label seed'i tek komutta yapar.
+Detaylar: https://github.com/atilcan65/dev-studio-launcher
 
 ### 2. Init script çalıştır
 
