@@ -860,6 +860,37 @@ poll_once() {
   issue_mentions="$(query_issue_mentions 2>/dev/null || echo '[]')"
   periodic_scan="$(query_periodic_backlog_scan 2>/dev/null || echo '[]')"
 
+  # v5.1 (Dev-Idle Prevention, Katman 1): emit `wake_nudge` when the agent
+  # has open work (`agent:<role>` or `cc:<role>` label on open issues) but
+  # `new_events` is otherwise empty. Without this, an idle session sees
+  # zero events and concludes "no work" — but the queue may have unresolved
+  # issues. The nudge makes the queue visible to one-shot polls.
+  local wake_nudge='[]'
+  if [ -n "${REPO:-}" ]; then
+    local queue_open cc_open
+    queue_open="$(gh issue list --repo "$REPO" --state open --label "agent:${ROLE}" --json number --jq 'length' 2>/dev/null || echo 0)"
+    cc_open="$(gh issue list --repo "$REPO" --state open --label "cc:${ROLE}" --json number --jq 'length' 2>/dev/null || echo 0)"
+    if [ "$((queue_open + cc_open))" -gt 0 ]; then
+      wake_nudge="$(jq -n \
+        --arg role "$ROLE" \
+        --arg now "$now" \
+        --arg repo "$REPO" \
+        --argjson queue "$queue_open" \
+        --argjson cc "$cc_open" \
+        '[
+           {
+             kind: "wake_nudge",
+             id: ("wake-nudge-" + $role + "-" + $now),
+             number: 0,
+             title: ("queue: agent:" + $role + "=" + ($queue|tostring) + ", cc:" + $role + "=" + ($cc|tostring) + " open issues"),
+             url: ("https://github.com/" + $repo + "/issues?q=is%3Aopen+label%3Aagent%3A" + $role),
+             updated_at: $now,
+             context: {agent_count: $queue, cc_count: $cc, note: "no-new-events but queue non-empty (Katman 1)"}
+           }
+         ]')"
+    fi
+  fi
+
   # Merge and dedupe
   local merged
   merged="$(jq -s 'add | unique_by(.id)' \
@@ -883,10 +914,12 @@ poll_once() {
     --arg now "$now" \
     --argjson events "$new_events" \
     --argjson next "$POLL_INTERVAL" \
+    --argjson nudge "$wake_nudge" \
     '{
        role: $role,
        polled_at_utc: $now,
        new_events: $events,
+       wake_nudge: $nudge,
        next_poll_sec: $next
      }'
 
@@ -906,9 +939,14 @@ poll_once() {
   # Trim processed_event_ids to keep state file bounded (default: keep last 50).
   "$STATE_HELPER" trim "$ROLE" >/dev/null 2>&1 || true
 
-  # Wake the tmux pane if events arrived and wake mode is on.
+  # Wake the tmux pane if events arrived OR wake_nudge present and wake mode is on.
+  # v5.1 (Dev-Idle Prevention, Katman 2): wake on nudge too, not only on
+  # new_events. Combined payload (events + nudges) gives the agent full
+  # context on wake.
   if [ "$WAKE_PANE" = "1" ]; then
-    wake_pane_for_role "$ROLE" "$new_events" || true
+    local wake_payload
+    wake_payload="$(jq -n --argjson e "$new_events" --argjson n "$wake_nudge" '$e + $n')"
+    wake_pane_for_role "$ROLE" "$wake_payload" || true
   fi
 }
 
