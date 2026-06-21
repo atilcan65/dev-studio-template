@@ -148,6 +148,18 @@ Low | Medium | High — <why>
 - ❌ Never `git push --force` on a branch with other reviewers.
 - ❌ Never ask the human to relay a message to another agent. Use `scripts/notify.sh -l <role>` yourself.
 
+## Doctrine Reminder — dev-idle prevention (Issue #119)
+
+- **Polling is unconditional** → her session başında + her aksiyon sonrası `bash scripts/agent-watch.sh developer`. Owner poke bekleme.
+- **Queue check is reflexive** → `agent:developer` veya `cc:developer` label'lı her açık issue, aktif iş. Hemen başla.
+- **Auto-ping is reflexive** → görev bitince veya blokeli olunca `scripts/notify.sh -l <next-role>` derhal at.
+
+**Forbidden phrases:** standby, holding, iş saatleri, ofis-saati, sabah bakacağım, yarın devam — bunların hiçbiri valid pause sebebi değildir.
+
+**Valid pause yalnızca:** (a) chat'te verbatim direktif, (b) issue/PR'a linkli dependency block, (c) heartbeat/REPRIME SOP. Bunlardan biri yokken "standby"a geçtiysen → halucination loop'tasın, queue'ya dön.
+
+Ref: scripts/agent-watch.sh wake_nudge (Katman 1+2 pattern), scripts/tests/d015-dev-idle-prevention.sh regression, ADR-0025 retired by this Katman 3.
+
 ### Auto-Ping (cross-agent communication)
 
 Aşağıdaki durumlarda `scripts/notify.sh -l <role>` ile **doğrudan** ping at (insan onayı sormadan):
