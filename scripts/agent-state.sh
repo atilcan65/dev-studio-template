@@ -43,6 +43,7 @@ _AS_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 _AS_PROJECT_DEFAULT="$(basename "$(cd "$_AS_SCRIPT_DIR/.." && pwd)")"
 _AS_HEARTBEAT_BASE="${DEV_STUDIO_HEARTBEAT_BASE:-/var/log/dev-studio}"
 STATE_DIR="${AGENT_STATE_DIR:-$_AS_HEARTBEAT_BASE/$_AS_PROJECT_DEFAULT/agent-state}"
+EVENT_LOG_DIR="${AGENT_EVENT_LOG_DIR:-$_AS_HEARTBEAT_BASE/$_AS_PROJECT_DEFAULT/event-log}"
 DEFAULT_POLL="${AGENT_POLL_INTERVAL_SEC:-60}"
 DEFAULT_TRIM_MAX="${AGENT_PROCESSED_MAX:-200}"
 DEFAULT_STALE_SEC="${AGENT_HEARTBEAT_STALE_SEC:-300}"
@@ -54,6 +55,12 @@ require_jq() {
     exit 127
   fi
 }
+
+# Source atomic-write helper (Issue #237). Must happen before jq_inplace so
+# jq_inplace can delegate. atomic_write_json guarantees no half-written state
+# even if process is killed mid-write (write-to-temp + sync + atomic mv).
+# shellcheck source=./atomic-write.sh
+source "$_AS_SCRIPT_DIR/atomic-write.sh"
 
 state_path() {
   local role="$1"
@@ -70,13 +77,15 @@ ensure_dir() {
   fi
 }
 
-# Atomic in-place jq edit: read file, apply filter, write to tmp, rename.
+# Atomic in-place jq edit: now delegates to atomic_write_json (Issue #237 fix).
+# Signature unchanged (file, jq_args...) so all 13 call sites in this script
+# automatically inherit the atomic-write guarantee. The old naive impl
+# (mktemp in /tmp + mv across filesystems) could leave the target empty or
+# partially-written if the process was killed mid-write. The new impl uses
+# same-directory temp + sync + atomic mv — observers always see either the
+# old content or the new content, never a half-written state.
 jq_inplace() {
-  local file="$1"
-  shift
-  local tmp
-  tmp="$(mktemp)"
-  jq "$@" "$file" > "$tmp" && mv "$tmp" "$file"
+  atomic_write_json "$@"
 }
 
 cmd_init() {
@@ -102,7 +111,9 @@ cmd_init() {
          pr_merged_last_seen_utc: null,
          pr_labeled_last_seen_utc: null,
          polled_at_utc: null,
-         last_synthetic_scan_utc: null
+         last_synthetic_scan_utc: null,
+         proactive_sweep_last_utc: null,
+         last_is_alive_utc: null
        }' > "$file"
     echo "Initialised state: $file"
   else
@@ -129,6 +140,15 @@ cmd_init() {
     # v3 → v4 backfill (ADR-0017): last_synthetic_scan_utc for periodic_backlog_scan throttle
     if ! jq -e 'has("last_synthetic_scan_utc")' "$file" >/dev/null 2>&1; then
       jq_inplace "$file" '.last_synthetic_scan_utc = null'
+    fi
+    # v4 → v5 backfill (Issue #44): proactive_sweep_last_utc for query_proactive_sweep throttle
+    if ! jq -e 'has("proactive_sweep_last_utc")' "$file" >/dev/null 2>&1; then
+      jq_inplace "$file" '.proactive_sweep_last_utc = null'
+    fi
+    # v5 → v6 backfill (Issue #238 sub-task 2, PR #245): last_is_alive_utc for
+    # synthetic is_alive heartbeat (5-min cadence, emitted by agent-watch.sh).
+    if ! jq -e 'has("last_is_alive_utc")' "$file" >/dev/null 2>&1; then
+      jq_inplace "$file" '.last_is_alive_utc = null'
     fi
     echo "State already exists: $file"
   fi
@@ -210,12 +230,38 @@ cmd_trim() {
   require_jq
   local role="$1"
   local max="${2:-$DEFAULT_TRIM_MAX}"
+  local ttl_buckets="${3:-}"  # ADR-0032 RCA-32: optional TTL filter (5min buckets; 288 = 24h)
   local file
   file="$(state_path "$role")"
   [ -f "$file" ] || { echo "ERROR: state file missing: $file" >&2; exit 2; }
-  jq_inplace "$file" --argjson max "$max" '
-    .processed_event_ids = (.processed_event_ids | .[-$max:])
-  '
+  if [ -n "$ttl_buckets" ] && [ "$ttl_buckets" -gt 0 ] 2>/dev/null; then
+    # ADR-0032 RCA-32 TTL-aware trim: drop entries whose bucket is older
+    # than (current - ttl_buckets), THEN slice to last $max. This bounds
+    # the dedup buffer to a 24h sliding window so historical events from
+    # past stale-cc conditions don't accumulate (refs Issue #216 RCA-18).
+    # Non-bucket IDs (wake_nudge, pr-merged, pr-review) are RETAINED via
+    # the if/test() pattern — they're bounded by their own throttle.
+    local current_bucket cutoff
+    current_bucket=$(( $(date -u +%s) / 300 ))
+    cutoff=$(( current_bucket - ttl_buckets ))
+    jq_inplace "$file" --argjson max "$max" --argjson cutoff "$cutoff" '
+      .processed_event_ids = (
+        [ .processed_event_ids[] |
+          if test("b[0-9]+$") then
+            (capture("b(?<bucket>[0-9]+)$").bucket | tonumber) as $b |
+            select($b >= $cutoff)
+          else
+            .  # wake_nudge / pr-merged / pr-review — retain
+          end
+        ] | .[-$max:]
+      )
+    '
+  else
+    # Legacy behavior: just slice the last $max entries
+    jq_inplace "$file" --argjson max "$max" '
+      .processed_event_ids = (.processed_event_ids | .[-$max:])
+    '
+  fi
 }
 
 # v2: surgical removal of dedup entries matching a substring (one-shot unblock).
@@ -266,6 +312,115 @@ cmd_stale() {
   exit 0
 }
 
+# Issue #237 (atomic-write state recovery, Sprint 4 P1):
+# Validate state file integrity. Detects three corruption modes:
+#   1. Missing file
+#   2. jq parse error (truncated/empty file from killed mid-write)
+#   3. Schema mismatch (missing required keys, processed_event_ids empty)
+#
+# Exit codes:
+#   0 = state file is valid
+#   1 = file missing
+#   2 = jq parse error
+#   3 = length-0 processed_event_ids
+#   4 = schema mismatch
+cmd_validate() {
+  require_jq
+  local role="$1"
+  local file
+  file="$(state_path "$role")"
+  if [ ! -f "$file" ]; then
+    echo "VALIDATE FAIL (1: missing): $file" >&2
+    return 1
+  fi
+  if ! jq -e '.' "$file" >/dev/null 2>&1; then
+    echo "VALIDATE FAIL (2: jq parse error): $file" >&2
+    return 2
+  fi
+  local len
+  len="$(jq -r '.processed_event_ids | length // 0' "$file" 2>/dev/null || echo 0)"
+  if [ "$len" -le 0 ]; then
+    echo "VALIDATE FAIL (3: processed_event_ids empty): $file" >&2
+    return 3
+  fi
+  if ! jq -e 'has("role") and has("processed_event_ids") and has("last_seen_utc")' "$file" >/dev/null 2>&1; then
+    echo "VALIDATE FAIL (4: schema mismatch): $file" >&2
+    return 4
+  fi
+  echo "VALIDATE OK: $file ($len events)"
+  return 0
+}
+
+# Issue #237: rebuild processed_event_ids from event log when state is
+# corrupted. The event log is an append-only JSONL file at
+# $EVENT_LOG_DIR/<role>.jsonl written by agent-watch.sh (via event_log_append).
+# Each line is a JSON object: {"id": "...", "kind": "...", "ts": "...", ...}.
+#
+# Rebuild strategy: dedupe all event IDs found in the log, replace
+# processed_event_ids with that dedup'd list, preserve other fields via
+# jq merge. If state file doesn't exist, init from scratch.
+#
+# Exit codes:
+#   0 = rebuild successful
+#   1 = no event log found
+#   2 = event log empty
+cmd_rebuild() {
+  require_jq
+  local role="$1"
+  local file event_log
+  file="$(state_path "$role")"
+  event_log="${EVENT_LOG_DIR}/${role}.jsonl"
+  if [ ! -f "$event_log" ]; then
+    echo "REBUILD FAIL (1: no event log): $event_log" >&2
+    return 1
+  fi
+  # Extract event IDs from log, dedupe, build JSON array
+  local ids_json count
+  ids_json="$(jq -r 'select(.id != null) | .id' "$event_log" 2>/dev/null \
+              | awk '!seen[$0]++' \
+              | jq -R . | jq -s 'unique')"
+  count="$(echo "$ids_json" | jq 'length')"
+  if [ "$count" -le 0 ]; then
+    echo "REBUILD FAIL (2: event log empty): $event_log" >&2
+    return 2
+  fi
+  local now
+  now="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+  # Atomic write: build replacement content, write to tmp, mv
+  local tmp
+  tmp="$(mktemp "${file}.rebuild.XXXXXX")"
+  if [ ! -f "$file" ]; then
+    # No state file — fresh init
+    jq -n \
+      --arg role "$role" \
+      --arg now "$now" \
+      --argjson ids "$ids_json" \
+      --argjson poll "$DEFAULT_POLL" \
+      '{
+         role: $role,
+         last_seen_utc: $now,
+         last_heartbeat_utc: $now,
+         processed_event_ids: $ids,
+         poll_interval_sec: $poll,
+         burst_until_utc: null,
+         pr_merged_last_seen_utc: null,
+         pr_labeled_last_seen_utc: null,
+         polled_at_utc: null,
+         last_synthetic_scan_utc: null,
+         proactive_sweep_last_utc: null,
+         last_is_alive_utc: null
+       }' > "$tmp"
+  else
+    # Existing state file — preserve other fields, replace processed_event_ids
+    jq --arg now "$now" --argjson ids "$ids_json" \
+      '.processed_event_ids = $ids | .last_seen_utc = $now' "$file" > "$tmp"
+  fi
+  sync "$tmp" 2>/dev/null || true
+  mv -f "$tmp" "$file"
+  echo "REBUILD OK: restored $count event IDs from $event_log to $file"
+  return 0
+}
+
 # --- dispatch ---
 case "${1:-}" in
   init)       shift; cmd_init "$@" ;;
@@ -278,6 +433,8 @@ case "${1:-}" in
   trim)       shift; cmd_trim "$@" ;;
   kick)       shift; cmd_kick "$@" ;;
   stale)      shift; cmd_stale "$@" ;;
+  validate)   shift; cmd_validate "$@" ;;
+  rebuild)    shift; cmd_rebuild "$@" ;;
   *)
     cat <<'USAGE' >&2
 Usage:
@@ -291,6 +448,8 @@ Usage:
   agent-state.sh trim      <role> [max]              (default max: 50)
   agent-state.sh kick      <role> <id_substring>     (drop dedup entries matching substring)
   agent-state.sh stale     <role> [threshold_sec]    (default: 300; exit 1 if stale)
+  agent-state.sh validate  <role>                    (Issue #237: exit 0 if state OK, 1-4 if corrupt)
+  agent-state.sh rebuild   <role>                    (Issue #237: restore processed_event_ids from event log)
 USAGE
     exit 2
     ;;
