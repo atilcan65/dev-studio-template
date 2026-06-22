@@ -1,8 +1,8 @@
 name: Status Label → Board Sync (ADR-0013)
 
 # Mirrors `status:*` label changes on issues and PRs onto the Projects v2
-# board's "Status" field. The board is owned by {{GITHUB_OWNER}} as project
-# number {{GITHUB_PROJECT_NUMBER}}.
+# board's "Status" field. The board is owned by atilcan65 as project
+# number 17.
 #
 # Label → field-option mapping (see ADR-0013):
 #   status:backlog      → Backlog
@@ -45,8 +45,8 @@ jobs:
       - name: Resolve label → status and update board
         uses: actions/github-script@v7
         env:
-          PROJECT_OWNER: "{{GITHUB_OWNER}}"
-          PROJECT_NUMBER: "{{GITHUB_PROJECT_NUMBER}}"
+          PROJECT_OWNER: "atilcan65"
+          PROJECT_NUMBER: "17"
           STATUS_FIELD_NAME: "Status"
         with:
           # PROJECT_TOKEN: classic PAT with `repo` + `project` scopes.
