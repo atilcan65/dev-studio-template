@@ -13,6 +13,11 @@ one in its `Supersedes` field.
 | [ADR-0014](./ADR-0014-project-token-secret.md) | PROJECT_TOKEN repo secret for board sync workflow | Accepted | 2026-06-14 | {{HUMAN_OWNER_NAME}} | Supersedes ADR-0013 auth section; related to ADR-0013 |
 | [ADR-0015](./ADR-0015-atomic-agent-handoff.md) | Atomic Agent Hand-off (preserve 4-cat invariant) | Accepted | 2026-06-14 | {{HUMAN_OWNER_NAME}} | Refines ADR-0009 cc-flip; ensures ADR-0012 invariant during agent transitions |
 | [ADR-0016](./ADR-0016-public-by-default.md) | Public-by-default for bootstrapped projects | Accepted | 2026-06-17 | {{HUMAN_OWNER_NAME}} | Related to ADR-0014 (PROJECT_TOKEN canary quota interaction) |
+| [ADR-0024](./ADR-0024-stale-verdict-watchdog-schema.md) | Stale-Verdict Watchdog Schema (`verdict-by:<ts>` labels + `stale_verdict` events) | Proposed | 2026-06-19 | {{HUMAN_OWNER_NAME}} | Related to ADR-0002, ADR-0009, ADR-0012, ADR-0015, ADR-0020, ADR-0021 |
+| [ADR-0025](./ADR-0025-bound-standby-exception.md) | Bound Standby Exception (a) + Queue-Empty Wake | **Superseded in template** (by §Doctrine Reminder — Issue #238 / PR #40 / PR #41) | 2026-06-19 | {{HUMAN_OWNER_NAME}} | Kept for historical traceability; canonical enforcement is the soul template §Doctrine Reminder section |
+| [ADR-0026](./ADR-0026-queue-empty-mention-check.md) | Queue-Empty Wake: @mention Check (Amendment to ADR-0025 §2) | Proposed | 2026-06-19 | {{HUMAN_OWNER_NAME}} | Amends ADR-0025 §2; related to ADR-0002, ADR-0021, ADR-0025 |
+| [ADR-0027](./ADR-0027-deploy-automation.md) | Automatic Deploy Pipeline (GH Action on main merge → SSH pull+restart) | Proposed | 2026-06-19 | {{HUMAN_OWNER_NAME}} | Related to ADR-0010, ADR-0014, ADR-0017, ADR-0022; ADR-0030 supersedes §Decision.1 (LAN-deploy case only) |
+| [ADR-0030](./ADR-0030-self-hosted-runner-lan-deploy.md) | Self-Hosted GitHub Runner for Private LAN Deploy | Proposed | 2026-06-19 | {{HUMAN_OWNER_NAME}} | Supersedes ADR-0027 §Decision.1 (LAN-deploy case only); related to ADR-0027, ADR-0010, Issue #138 |
 
 ## Conventions
 
