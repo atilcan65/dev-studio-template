@@ -820,7 +820,7 @@ wake_pane_for_role() {
   prompt="🔔 INBOX (auto-wake from agent-watch loop):
 ${pretty}
 
-Lütfen pickup et: review yap, label flip et, peer'i bilgilendir, sonra standby."
+Lütfen pickup et: review yap, label flip et, peer'i bilgilendir, sonra aktif kal."
 
   # Send prompt then Enter. Use literal mode (-l) so backticks/quotes survive.
   tmux send-keys -t "$pane_id" -l "$prompt" 2>/dev/null || return 0
