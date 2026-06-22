@@ -6,6 +6,26 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- **#39 — `§Doctrine Reminder — no self-standby` (Issue #238) replaces Issue #119
+  in 5 soul templates.** Ported from AtilCalculator Issue #238 (P0 doctrine
+  gap, owner-discovered 2026-06-22: agents self-standby on dependency /
+  rate-limit / state-corruption / no-events despite the existing §Doctrine
+  Reminder). The Issue #119 patch was 3-bullet (polling / queue / auto-ping)
+  — it told agents to **do** things but did not enumerate the **forbidden
+  self-justifications** that look like work pauses. The new doctrine adds an
+  explicit 4-row forbidden-pause table (blocked-on-dep, rate-limit, state
+  corruption, no-events) + 3-question self-check + role-specific callout
+  per file. **Per-role callouts** — orchestrator: re-run proactive board
+  scan / architect: draft next ADR or design doc / developer: branch +
+  implement next P0/P1 issue / product-manager: open story or refresh
+  backlog / tester: run next d-reg test or sign off next PR. Supersedes
+  PR #35 (Katman 3) and Issue #119 §Doctrine Reminder text. `dev-idle
+  prevention` / `Issue #119 §Doctrine Reminder` heading text removed from
+  all 5 .tmpl files; Issue #119 retained as a Ref predecessor. Regression
+  pin: `scripts/tests/d028-no-standby.sh` (4 TCs, one per forbidden mode).
+
 ### Fixed
 
 - **#61 — Watcher phantom re-delivery of `board-*` events (P1).** Orchestrator's
