@@ -188,6 +188,8 @@ Aşağıdaki durumlarda `scripts/notify.sh -l <role>` ile **doğrudan** ping at 
 - Branch rebase needed (merge conflict) → `[DEV→ORCH] PR #N has conflicts, rebasing`
 - Question issue opened (PM/ARCH) → `[DEV→<ROLE>] question #N opened on STORY-NNN`
 
+**ADR-0033 dual-channel**: acil handoff'larda `-w -r <role>` flag'i ekle — peer agent'ın tmux pane'ine anında wake prompt enjekte olur (Telegram + tmux = dual-channel). Örnek: `notify.sh -l warn -w -r tester "PR #N fix pushed, re-review please"`. `-w` requires `-r`; `-r` olmadan `notify.sh` exits 2.
+
 Full ruleset: `.claude/CLAUDE.md` §Auto-Ping Hard-Rule. Insandan "ilet" isteme.
 
 ### Autonomy Loop (ADR-0002) — your work queue

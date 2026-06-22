@@ -115,7 +115,10 @@ Insan "kurye" değil. Insan **gate-keeper**. Sen agent olarak peer'larınla doğ
 
 ### Why this exists
 
-`scripts/notify.sh` Telegram'a yazar. Telegram'ı **insan** okur, agent'lar okumaz. Yani Auto-Ping tek başına yetmez — peer agent ping'i görmez. Bu boşluğu GitHub kapatır: her ping'in **bir GitHub artefact eşi** vardır (issue label, PR comment, mention, label change). Agent'lar bunu polling ile fark eder.
+`scripts/notify.sh` Telegram'a yazar. Telegram'ı **insan** okur, agent'lar okumaz. Yani Auto-Ping tek başına yetmez — peer agent ping'i görmez. Bu boşluğu **iki kanal** kapatır:
+
+1. **GitHub artefact** (her zaman): her ping'in bir GitHub artefact eşi vardır (issue label, PR comment, mention, label change). Agent'lar `agent-watch.sh` polling'inde bunu fark eder.
+2. **Tmux wake** (ADR-0033, Issue #221): `notify.sh -w -r <role>` flag'i Telegram POST'unun ardından `scripts/agent-wake.sh` çağırarak peer agent'ın tmux pane'ine wake prompt enjekte eder. `-w` requires `-r`; aksi halde `notify.sh` exits 2.
 
 ### The loop (her session başında, her aksiyon sonrası)
 
@@ -172,13 +175,22 @@ bash scripts/agent-watch.sh <your-role>
 
 ### Coupling with Auto-Ping Hard-Rule
 
-Auto-Ping (`notify.sh`) ve Autonomy Loop (`agent-watch.sh`) **birlikte** çalışır:
+Auto-Ping (`notify.sh`) ve Autonomy Loop (`agent-watch.sh`) **birlikte** çalışır. ADR-0033 dual-channel doctrine:
 
-1. Sen iş bitirip Auto-Ping atarsın → Telegram'a düşer (insan görür) **VE** GitHub'da label/comment olarak işlenir (peer görür)
-2. Peer agent kendi `agent-watch.sh` loop'unda bu GitHub artefact'i fark eder → wake-up sinyali
-3. Peer aksiyon alır → kendi Auto-Ping'ini atar → cycle devam eder
+1. Sen iş bitirip Auto-Ping atarsın → **Telegram**'a düşer (insan görür) **VE** GitHub'da label/comment olarak işlenir (peer görür)
+2. `-w -r <role>` flag'i set'li ise → `scripts/agent-wake.sh` da peer agent'ın tmux pane'ine wake prompt enjekte eder (dual-channel — peer anında uyanır, polling'i beklemeden)
+3. Peer agent kendi `agent-watch.sh` loop'unda GitHub artefact'i fark eder → uyandığında zaten tmux prompt'u işlemiş olur
+4. Peer aksiyon alır → kendi Auto-Ping'ini atar → cycle devam eder
 
-**Kural**: her `notify.sh` çağrısı *aynı zamanda* bir GitHub artefact'i tetiklemelidir (label ekleme, comment yazma, assignee/cc değiştirme). Sadece Telegram'a yazıp GitHub'a yazmamak = peer'ı uyandırmamak.
+**Kural**: her `notify.sh` çağrısı *aynı zamanda* bir GitHub artefact'i tetiklemelidir (label ekleme, comment yazma, assignee/cc değiştirme). Sadece Telegram'a yazıp GitHub'a yazmamak = peer'ı GitHub üzerinden uyandırmamak. `-w -r` eklemek ise ek bir hız kazanımı — peer anında uyanır (polling'i beklemeden).
+
+**Ne zaman `-w` kullan**:
+- Acil handoff: peer'a "şu iş sende" diyorsan (örn. tester → developer "fix pushed, re-review please")
+- Kanıt: PR #239 AtilCalculator'da bu doktrinin Sprint 4 P0 PR'ı merge edildi (16:12Z). `notify.sh -w -r tester "PR #230 ready for review"` şeklinde çağrıldığında, tester'ın tmux pane'ine anında prompt enjekte olur.
+
+**Ne zaman `-w` KULLANMA**:
+- Bilgilendirme amaçlı ping (insana veya broadcast): sadece Telegram yeterli
+- Peer aktif değilse veya sessizse: GitHub artefact yeterli (label/comment), peer watcher loop'unda görür
 
 ## Required Label Set on Issue/PR Creation — the birth contract (ADR-0012)
 

@@ -26,6 +26,35 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   all 5 .tmpl files; Issue #119 retained as a Ref predecessor. Regression
   pin: `scripts/tests/d028-no-standby.sh` (4 TCs, one per forbidden mode).
 
+### Added
+
+- **Auto-Ping dual-channel wiring (ADR-0033, Issue #221 port to template — Issue
+  #222).** Mirror of the AtilCalculator Sprint 4 P0 fix. Three new files +
+  two doctrine updates:
+  - `scripts/agent-wake.sh` (new, ~75 lines) — standalone CLI that injects
+    a wake-up prompt into a named agent's tmux pane via `send-keys -l` +
+    `Enter`. Role-to-pane index map (orchestrator=0, ..., tester=4) with
+    title-based fallback. Silent no-op when tmux missing / unknown role /
+    no session — callers don't need to guard. Exit 2 on missing args.
+  - `scripts/notify.sh` — `-w` (wake) and `-r <role>` flags added. After
+    Telegram POST, when `-w` is set, `notify.sh` invokes `agent-wake.sh`
+    to inject the wake prompt into the target pane. `-w` requires `-r`;
+    `-w` without `-r` → exit 2 (loud failure). Backward compat: when
+    `-w` is NOT set, behavior is unchanged (Telegram only).
+  - `scripts/tests/d024-agent-wake.sh` (new, ~165 lines) — 7-TC regression
+    test per ADR-0033 §Test contract (T1 send-keys + Enter, T2 no-tmux,
+    T3 unknown-role, T4 missing-args exit 2, T5 dual-channel wiring,
+    T6 -w/-r requirement check, T7 literal-mode). Locks in both the
+    `agent-wake.sh` shape AND the `notify.sh` dual-channel integration.
+  - `.claude/CLAUDE.md.tmpl` — §Auto-Ping Hard-Rule updated: explains
+    dual-channel doctrine (Telegram + tmux), when to use `-w` (acil
+    handoff) vs. when NOT (bilgilendirme amaçlı ping).
+  - `.claude/agents/developer.md.tmpl` — Auto-Ping section adds ADR-0033
+    callout: acil handoff'larda `-w -r <role>` flag'i ekle.
+
+  Reference impl: `atilcan65/AtilCalculator` commit `ecbf21a` (PR #239).
+  TDD red→green in template: d024 5/7 PASS pre-port → 7/7 PASS post-port.
+
 ### Fixed
 
 - **#61 — Watcher phantom re-delivery of `board-*` events (P1).** Orchestrator's
