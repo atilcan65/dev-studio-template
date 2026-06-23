@@ -975,6 +975,29 @@ poll_once() {
     wake_payload="$(jq -n --argjson e "$new_events" --argjson n "$wake_nudge" '$e + $n')"
     wake_pane_for_role "$ROLE" "$wake_payload" || true
   fi
+
+  # v8 (Issue #272 / ADR-0038 §Layer 2): Auto-Claim Protocol hook (template port).
+  # After events processed + pane wake, call claim-next-ready.sh. Exit codes:
+  #   0 = claimed (re-poll to surface the new status:in-progress event)
+  #   1 = nothing to claim (no ready items or all blocked by open deps)
+  #   3 = WIP limit reached
+  #   4 = gh API error
+  # Re-poll on exit 0 is critical: the claim changes a status label, which
+  # produces a fresh `label_change` event. If we don't re-poll, the agent
+  # sleeps for POLL_INTERVAL seconds before noticing its own action.
+  # Kill switch: CLAIM_NEXT_READY_ENABLED=false bypasses the entire hook.
+  if [ "${CLAIM_NEXT_READY_ENABLED:-true}" = "true" ]; then
+    local claim_script="$SCRIPT_DIR/claim-next-ready.sh"
+    if [ -x "$claim_script" ]; then
+      local claim_rc=0
+      bash "$claim_script" "$ROLE" >/dev/null 2>&1 || claim_rc=$?
+      if [ "$claim_rc" = "0" ]; then
+        # Claim succeeded — re-poll so the watcher sees the new in-progress
+        # event in the next cycle (per ADR-0038 §sequence diagram step 11).
+        poll_once
+      fi
+    fi
+  fi
 }
 
 case "$MODE" in
