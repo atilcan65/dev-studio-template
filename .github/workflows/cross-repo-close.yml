@@ -1,0 +1,46 @@
+name: cross-repo-close
+
+# Closes cross-repo issues referenced from a merged PR.
+# Implements ADR-0040 (cross-repo PR auto-close pattern).
+#
+# Owner override (2026-06-24): uses ${{ secrets.PROJECT_TOKEN }} instead of a
+# dedicated CROSS_REPO_CLOSE_TOKEN. ADR-0040 caveat 1 originally recommended
+# a dedicated PAT for least-privilege; owner consolidated to PROJECT_TOKEN
+# (which already has `repo + project` scope and covers contents:write +
+# issues:write needed for cross-repo issue close).
+#
+# Script contract unchanged: scripts/cross-repo-close.sh reads
+# CROSS_REPO_CLOSE_TOKEN env var, so the workflow remaps via env alias.
+#
+# Triggers: pull_request.closed where merged == true.
+# Behavior: idempotent (skips already-closed foreign issues), graceful
+# degradation (warns + manual close comment if token missing or API fails).
+#
+# File ownership: .github/workflows/ is human-only per CLAUDE.md matrix,
+# applied via owner override (ADR-0031).
+#
+# TEMPLATE PORT (Issue #372, RETRO-005 candidate): mirrors the AtilCalculator
+# cross-repo-close workflow (MERGED in AtilCalculator #290 close-out).
+# Without this in template, cross-repo PRs that mention `Closes atilcan65/<repo>#N`
+# cannot auto-close the foreign issue (Issue #290 was closed manually because
+# this workflow was missing here). Sister template port to #290 (wip-idle-detect).
+
+on:
+  pull_request:
+    types: [closed]
+
+permissions:
+  contents: read
+
+jobs:
+  cross-repo-close:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run cross-repo close bridge
+        run: bash scripts/cross-repo-close.sh
+        env:
+          CROSS_REPO_CLOSE_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
