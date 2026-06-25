@@ -18,8 +18,16 @@ one in its `Supersedes` field.
 | [ADR-0026](./ADR-0026-queue-empty-mention-check.md) | Queue-Empty Wake: @mention Check (Amendment to ADR-0025 §2) | Proposed | 2026-06-19 | {{HUMAN_OWNER_NAME}} | Amends ADR-0025 §2; related to ADR-0002, ADR-0021, ADR-0025 |
 | [ADR-0027](./ADR-0027-deploy-automation.md) | Automatic Deploy Pipeline (GH Action on main merge → SSH pull+restart) | Proposed | 2026-06-19 | {{HUMAN_OWNER_NAME}} | Related to ADR-0010, ADR-0014, ADR-0017, ADR-0022; ADR-0030 supersedes §Decision.1 (LAN-deploy case only) |
 | [ADR-0030](./ADR-0030-self-hosted-runner-lan-deploy.md) | Self-Hosted GitHub Runner for Private LAN Deploy | Proposed | 2026-06-19 | {{HUMAN_OWNER_NAME}} | Supersedes ADR-0027 §Decision.1 (LAN-deploy case only); related to ADR-0027, ADR-0010, Issue #138 |
+| [ADR-0046](./ADR-0046-d-test-convention.md) | d-numbered regression test convention (`scripts/tests/dNNN-*.sh`) | Proposed | 2026-06-23 | {{HUMAN_OWNER_NAME}} | Codifies existing pattern (AtilCalculator d006–d033); related to ADR-0002, ADR-0025, ADR-0026, Issue #198 |
 
 ## Conventions
+
+- **Path**: `docs/decisions/ADR-NNNN-<slug>.md`
+- **ID**: monotonically increasing, zero-padded to 4 digits
+- **Slug**: kebab-case, short, filename-safe
+- **Status lifecycle**: Proposed → Accepted → (optionally) Superseded by ADR-MMMM
+- **Header**: every ADR starts with `# ADR-NNNN: <title>` followed by a YAML-style frontmatter block (Status, Date, Deciders, Supersedes, Related)
+- **Regression tests**: `scripts/tests/dNNN-<slug>.sh` per [ADR-0046](./ADR-0046-d-test-convention.md) — 3-digit monotonic number, kebab-case slug, self-contained bash, standalone runnable. See `scripts/README.md` §d-test convention for the body skeleton.
 
 - **Path**: `docs/decisions/ADR-NNNN-<slug>.md`
 - **ID**: monotonically increasing, zero-padded to 4 digits
