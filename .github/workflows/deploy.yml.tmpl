@@ -1,0 +1,114 @@
+# .github/workflows/deploy.yml.tmpl
+# TEMPLATE PORT (Issue #375 Option A, ADR-0047) — generic deploy automation pattern.
+#
+# Why this workflow exists
+# ------------------------
+# Codifies the deploy-automation pattern as an env-driven, project-agnostic
+# workflow. Sister to AtilCalculator .github/workflows/deploy.yml (v5) but
+# generalized:
+#   - No hardcoded service name, module path, port, or healthz path
+#   - 4 required env vars (SERVICE_NAME, MODULE_PATH, DEPLOY_PORT, HEALTHZ_PATH)
+#     + 1 optional (PROD_HOSTNAME) — set via repo Settings → Variables
+#   - SHA-pinned Action references (lens h, ADR-0027 §Threat model + ADR-0043)
+#   - nohup+setsid restart (NOT systemctl --user) — generic, no systemd dep
+#
+# Sister workflow: atilcan65/AtilCalculator .github/workflows/deploy.yml (v5,
+# 124 LOC, AtilCalc-specific service name + module path hardcoded)
+#
+# Install pattern (template → project):
+#   1. Copy this file: cp .github/workflows/deploy.yml.tmpl .github/workflows/deploy.yml
+#   2. Set the 5 repo Variables (Settings → Secrets and variables → Actions):
+#        SERVICE_NAME, MODULE_PATH, DEPLOY_PORT, HEALTHZ_PATH, PROD_HOSTNAME
+#   3. Set the 3 repo Secrets (DEPLOY_SSH_KEY, DEPLOY_HOST, DEPLOY_USER)
+#      OR convert to self-hosted runner (per AtilCalculator ADR-0030)
+#   4. Owner approves the workflow-file rename (per CLAUDE.md §File ownership
+#      matrix: .github/workflows/ is human-only territory)
+#
+# Pattern sources:
+#   - AtilCalculator ADR-0027 (auto-deploy pattern source)
+#   - AtilCalculator ADR-0030 (self-hosted runner source)
+#   - AtilCalculator RCA-7/9/11/12/14 hardening (FAIL-or-CREATE preflight,
+#     cross-user port check, post-restart etimes check, idempotent converge)
+#
+# See ADR-0047 in docs/decisions/ for the full pattern spec + env-var table.
+
+name: Deploy to production
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:  # manual trigger for emergency re-deploy
+
+# Minimal permissions (least-privilege per ADR-0027 §Threat model).
+permissions:
+  contents: read
+
+# Concurrency: serialize deploys. Never cancel a running deploy mid-flight —
+# would leave prod in a half-deployed state. New deploys queue.
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy + smoke test + auto-rollback (template port of ADR-0027)
+    runs-on: self-hosted  # OR ubuntu-latest with appleboy/ssh-action (per ADR-0027 §Decision.2)
+    timeout-minutes: 5  # bounded; longer = hung runner / script, abort + investigate
+
+    env:
+      # 4 required env vars (per ADR-0047 §Decision.1 env-var table)
+      SERVICE_NAME: ${{ vars.SERVICE_NAME }}
+      MODULE_PATH: ${{ vars.MODULE_PATH }}
+      DEPLOY_PORT: ${{ vars.DEPLOY_PORT }}
+      HEALTHZ_PATH: ${{ vars.HEALTHZ_PATH }}
+      # 1 optional env var (warn-only hostname validation, lens g)
+      PROD_HOSTNAME: ${{ vars.PROD_HOSTNAME }}
+
+    steps:
+      # 1. Checkout the just-merged SHA on main.
+      #    SHA-pinned per ADR-0027 §Threat model — supply-chain defense.
+      #    fetch-depth=0 so deploy-runner.sh can introspect git history
+      #    (HEAD@{1} for rollback reference).
+      - name: Checkout
+        uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11  # v4.1.1
+        with:
+          fetch-depth: 0
+
+      # 2. Deploy + smoke test + auto-rollback (ADR-0047 §Decision.4).
+      #    Idempotent converge + restart + smoke + rollback (ADR-0027 §3+5
+      #    pattern preserved). nohup+setsid restart (no systemd dependency).
+      #
+      #    deploy-runner.sh does:
+      #      a. env-var validation (FAIL-or-CREATE per ADR-0027 RCA-9)
+      #      b. git fetch + git reset --hard origin/main (idempotent converge)
+      #      c. preflight uv venv + uv pip install -p .venv -e . (RCA-7-4/9/11)
+      #      d. RCA-12 pre-check (ss port-owner uid vs current uid, exit 5)
+      #      e. pkill + nohup setsid .venv/bin/uvicorn $MODULE_PATH
+      #         --host $DEPLOY_BIND_HOST --port $DEPLOY_PORT (no systemd)
+      #      f. RCA-12 post-check (ss etimes ≤ 60s, exit 6 on stale port)
+      #      g. smoke test GET $HEALTHZ_URL (expecting git_sha=$GITHUB_SHA)
+      #      h. rollback to HEAD@{1} + restart + retry smoke test once
+      #      i. double-failure: page owner via scripts/notify.sh -l human
+      - name: Deploy + smoke test + auto-rollback
+        id: deploy
+        env:
+          REPO_DIR: ${{ github.workspace }}
+          GITHUB_SHA: ${{ github.sha }}
+        run: |
+          bash scripts/deploy-runner.sh
+
+      # 3. Post-deploy notification (RCA-2 fix: always notify, even on cancel).
+      #    Per ADR-0027 §Decision.3 + AtilCalculator Issue #143 fix.
+      - name: Notify owner (always)
+        if: always()
+        run: |
+          if [ "${{ job.status }}" = "success" ]; then
+            bash scripts/notify.sh -l ok "[DEPLOY] ${SERVICE_NAME} @ ${GITHUB_SHA} deployed — smoke test PASSED"
+          else
+            bash scripts/notify.sh -l error "[DEPLOY] ${SERVICE_NAME} @ ${GITHUB_SHA} deploy FAILED — https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          fi
+        env:
+          GITHUB_SHA: ${{ github.sha }}
+          SERVICE_NAME: ${{ env.SERVICE_NAME }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}

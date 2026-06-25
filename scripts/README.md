@@ -186,3 +186,96 @@ exit 0
 
 - [ADR-0046](../docs/decisions/ADR-0046-d-test-convention.md) — full convention spec
 - AtilCalculator `scripts/tests/` (d006–d033) — pattern origin
+
+---
+
+## deploy-runner — `scripts/deploy-runner.sh` + `.github/workflows/deploy.yml.tmpl` (ADR-0047)
+
+Auto-deploy on `push to main` for self-hosted single-VM deployments. Generic,
+env-driven, project-agnostic. Sister to AtilCalculator `scripts/deploy-runner.sh`
+v9.1 (562 LOC, AtilCalc-specific) but **parameterized** — the AtilCalc-specific
+service name + module path + port + healthz path are now env vars in this
+template version.
+
+Canonical pattern codified in [ADR-0047](../docs/decisions/ADR-0047-deploy-automation-pattern.md).
+
+### Env-var table (4 required + 1 optional)
+
+| Name | Required | Type | Default | Example | Purpose |
+|---|---|---|---|---|---|
+| `SERVICE_NAME` | **YES** | string | — | `myapp-web` | Service identifier for logs + notify |
+| `MODULE_PATH` | **YES** | string | — | `myapp.api.main:app` | Python module:app object for uvicorn |
+| `DEPLOY_PORT` | **YES** | integer | — | `8000` | TCP port to bind + smoke-test against |
+| `HEALTHZ_PATH` | **YES** | string | — | `/healthz` | Healthcheck endpoint path (must return JSON with `git_sha` field) |
+| `PROD_HOSTNAME` | optional | string | (skip check) | `myapp-prod-01` | Warn-only hostname validation (lens g safety net) |
+
+Plus `GITHUB_SHA` (caller must pass; 40-char hex), `REPO_DIR` (default
+`$GITHUB_WORKSPACE`), `DEPLOY_HOST` (default `127.0.0.1`),
+`DEPLOY_BIND_HOST` (default `0.0.0.0`), `HEALTHZ_TIMEOUT_SEC`,
+`SMOKE_ATTEMPTS`, `SMOKE_RETRY_DELAY_SEC` — see ADR-0047 §Decision.1 for
+the full env-var table.
+
+### Install pattern (template → project)
+
+1. Copy the workflow: `cp .github/workflows/deploy.yml.tmpl .github/workflows/deploy.yml`
+2. Set the 5 repo Variables (Settings → Secrets and variables → Actions):
+   `SERVICE_NAME`, `MODULE_PATH`, `DEPLOY_PORT`, `HEALTHZ_PATH`, `PROD_HOSTNAME`
+3. Set the 3 repo Secrets (`DEPLOY_SSH_KEY`, `DEPLOY_HOST`, `DEPLOY_USER`)
+   OR convert to self-hosted runner (per AtilCalculator ADR-0030)
+4. **Owner approves the workflow-file rename** (per CLAUDE.md §File ownership
+   matrix: `.github/workflows/` is human-only territory)
+5. Implement your project's `/healthz` endpoint returning
+   `{"status": "ok", "git_sha": "<sha>"}` (per ADR-0027 §Decision.3)
+
+### Run standalone (dry-run mode)
+
+```bash
+SERVICE_NAME=myapp-web \
+  MODULE_PATH=myapp.api.main:app \
+  DEPLOY_PORT=8000 \
+  HEALTHZ_PATH=/healthz \
+  GITHUB_SHA="$(git rev-parse HEAD)" \
+  bash scripts/deploy-runner.sh --dry-run
+```
+
+`--dry-run` prints the deploy plan (steps 1-7) without executing. Useful for
+verifying env-var setup + catching typos before the first real merge.
+
+### Restart pattern: nohup+setsid (NOT systemctl --user)
+
+**Chosen**: `pkill <existing PID on port> && nohup setsid <uvicorn>
+<MODULE_PATH> --host <DEPLOY_BIND_HOST> --port <DEPLOY_PORT>`.
+
+Rationale: template users may not have systemd user-service configured. The
+nohup+setsid pattern is **universal** — works on any host with bash +
+uvicorn. AtilCalculator v9 uses `systemctl --user start <service>` (per
+ADR-0010) for better lifecycle management on their prod host, but that's an
+instance-specific refinement, not the pattern.
+
+**Trade-off acknowledged**: nohup-spawned uvicorn is terminated by GH Actions
+"Cleanup orphan processes" step at job end IF the runner is on the same host as
+prod (self-hosted runner pattern from ADR-0030). For self-hosted runners on the
+prod host, add a service supervisor (systemd `<service>.service` unit +
+`loginctl enable-linger <user>`, or supervisord, or runit) to keep the service
+alive across runner cleanup. AtilCalculator v9 chose systemd user-service.
+
+### Sister pattern + cross-references
+
+- **AtilCalculator ADR-0027** — concrete working instance (auto-deploy on push to main)
+- **AtilCalculator ADR-0030** — concrete self-hosted runner pattern (LAN-deploy case)
+- **AtilCalculator `scripts/deploy-runner.sh` v9.1** — 562 LOC live implementation with RCA-7/9/11/12/14 hardening
+- **Template ADR-0047** — abstract/parameterized pattern (this template port)
+
+### Regression coverage
+
+- `scripts/tests/d046-deploy-runner-env-validation.sh` — 9 TCs (env-var fail-loud contract, lens d)
+- `scripts/tests/d047-deploy-runner-smoke-test.sh` — 7 TCs (smoke-test + rollback contract, lens f + lens e)
+
+Total 16 TCs verify the pattern contract. Sister-test pattern per ADR-0046
+d-test convention.
+
+### Reference
+
+- [ADR-0047](../docs/decisions/ADR-0047-deploy-automation-pattern.md) — full pattern spec + env-var table + 9-lens attestation
+- AtilCalculator [ADR-0027](https://github.com/atilcan65/AtilCalculator/blob/main/docs/decisions/ADR-0027-deploy-automation.md) — auto-deploy pattern source
+- AtilCalculator [ADR-0030](https://github.com/atilcan65/AtilCalculator/blob/main/docs/decisions/ADR-0030-self-hosted-runner-lan-deploy.md) — self-hosted runner source
